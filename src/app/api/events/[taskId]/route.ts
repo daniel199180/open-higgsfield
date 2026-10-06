@@ -1,3 +1,4 @@
+import { requireAdminRequest } from "@/lib/api-security";
 import { NextRequest } from "next/server";
 import { getTask, initStore } from "@/lib/task-store";
 
@@ -8,6 +9,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ taskId: string }> }
 ) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
   const { taskId } = await params;
   await initStore();
   const task = getTask(taskId);

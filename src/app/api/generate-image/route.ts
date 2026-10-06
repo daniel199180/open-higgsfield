@@ -1,6 +1,10 @@
+import { requireAdminRequest } from "@/lib/api-security";
+import { generationEndpoint } from "@/lib/generation-request";
+import { toJpeg } from "@/lib/media-upload";
 import { NextRequest, NextResponse } from "next/server";
-import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
 import { getImageAdapter } from "@/models/adapters/image";
+import { findCapability } from "@/providers/catalog";
+import type { ImageModelCapability } from "@/models/capabilities/image";
 import { saveInputLocally, uploadToTmpfiles } from "@/lib/upload";
 import { submitGeneration } from "@/lib/generation-service";
 import { publicErrorMessage } from "@/lib/public-error";
@@ -10,14 +14,19 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+  return generationEndpoint(req, generate);
+}
+async function generate(req: NextRequest) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
   const form = await req.formData();
 
   // ── Model lookup ──────────────────────────────────────────────────────────
   const modelId = String(form.get("model_id") ?? "").trim();
-  const caps = IMAGE_CAPABILITIES[modelId];
+  const caps = await findCapability("image", modelId);
   if (!caps) {
     return NextResponse.json({ error: `ERR_UNKNOWN_IMAGE_MODEL: ${modelId}` }, { status: 400 });
   }
+  const imageCaps = caps as ImageModelCapability;
 
   const adapter = (caps.provider ?? "freepik") === "freepik" ? getImageAdapter(modelId) : undefined;
   if ((caps.provider ?? "freepik") === "freepik" && !adapter) {
@@ -29,6 +38,7 @@ export async function POST(req: NextRequest) {
   if (caps.prompt_required && !prompt) {
     return NextResponse.json({ error: "ERR_PROMPT_REQUIRED" }, { status: 400 });
   }
+  if (prompt.length > (caps.prompt_max ?? 10000)) return NextResponse.json({ error: "ERR_PROMPT_TOO_LONG" }, { status: 400 });
 
   let fieldValues: Record<string, unknown> = {};
   try { fieldValues = JSON.parse(String(form.get("field_values") ?? "{}")); } catch { }
@@ -36,8 +46,8 @@ export async function POST(req: NextRequest) {
   const params: CanonicalParams = {
     model_id: modelId,
     prompt,
-    aspect_ratio: String(form.get("size_aspect") ?? caps.size_ui?.default_aspect ?? ""),
-    resolution: String(form.get("size_resolution") ?? caps.size_ui?.default_resolution ?? ""),
+    aspect_ratio: String(form.get("size_aspect") ?? imageCaps.size_ui?.default_aspect ?? ""),
+    resolution: String(form.get("size_resolution") ?? imageCaps.size_ui?.default_resolution ?? ""),
     seed: Number.isFinite(Number(fieldValues.seed)) ? Number(fieldValues.seed) : undefined,
     field_values: fieldValues,
   };
@@ -49,7 +59,7 @@ export async function POST(req: NextRequest) {
   // Determine active slots — check both base media_slots and edit_variant slots
   const allSlotIds = [
     ...caps.media_slots.map((s) => s.id),
-    ...(caps.has_edit_variant ? ["reference_images"] : []),
+    ...(imageCaps.has_edit_variant ? ["reference_images"] : []),
   ];
 
   for (const slotId of allSlotIds) {
@@ -65,9 +75,9 @@ export async function POST(req: NextRequest) {
       // edit_variant slot (e.g. reference_images for Seedream)
       const converted: string[] = [];
       for (const file of files) {
-        const buf = Buffer.from(await file.arrayBuffer());
-        const ext = file.name.split(".").pop() ? `.${file.name.split(".").pop()}` : ".jpg";
-        const mimeType = file.type || "image/jpeg";
+        const buf = await toJpeg(Buffer.from(await file.arrayBuffer()));
+        const ext = ".jpg";
+        const mimeType = "image/jpeg";
         const localUrl = await saveInputLocally(buf, ext);
         slotLocalUrls[slotId] = [...(slotLocalUrls[slotId] ?? []), localUrl];
         const remoteUrl = await uploadToTmpfiles(buf, `file${ext}`, mimeType);
@@ -79,9 +89,9 @@ export async function POST(req: NextRequest) {
 
     const converted: string[] = [];
     for (const file of files) {
-      const buf = Buffer.from(await file.arrayBuffer());
-      const ext = file.name.split(".").pop() ? `.${file.name.split(".").pop()}` : ".jpg";
-      const mimeType = file.type || "image/jpeg";
+      const buf = await toJpeg(Buffer.from(await file.arrayBuffer()));
+      const ext = ".jpg";
+      const mimeType = "image/jpeg";
       const localUrl = await saveInputLocally(buf, ext);
       slotLocalUrls[slotId] = [...(slotLocalUrls[slotId] ?? []), localUrl];
       const remoteUrl = await uploadToTmpfiles(buf, `file${ext}`, mimeType);

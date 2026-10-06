@@ -1,8 +1,10 @@
+import { requireAdminRequest } from "@/lib/api-security";
 import { NextRequest, NextResponse } from "next/server";
 import { getTask, initStore } from "@/lib/task-store";
 import { downloadUrl } from "@/lib/upload";
 
 export async function POST(req: NextRequest) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
     await initStore();
     const body = await req.json() as { task_id?: string; image_index?: number };
     const { task_id, image_index } = body;

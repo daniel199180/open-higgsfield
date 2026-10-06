@@ -127,6 +127,20 @@
         "reuse": "Reutilizar"
     },
     "errors": {
+        "ERR_GENERATION_CONNECTION_INTERRUPTED": "A conexão foi interrompida. Confira a galeria e a atividade no provedor antes de repetir; a geração pode continuar em andamento.",
+        "ERR_OPENROUTER_API_KEY_NOT_CONFIGURED": "Adicione uma chave do OpenRouter em APIs.",
+        "ERR_OPENROUTER_AUTH": "O OpenRouter rejeitou a chave de API. Confira a conexão em APIs.",
+        "ERR_OPENROUTER_CREDITS": "O OpenRouter informou saldo insuficiente ou limite de gastos da chave atingido.",
+        "ERR_OPENROUTER_FORBIDDEN": "O OpenRouter recusou a solicitação. Confira permissões do modelo, restrições da conta e política de conteúdo.",
+        "ERR_OPENROUTER_MODEL_UNAVAILABLE": "Este modelo não tem um endpoint disponível no OpenRouter. Selecione outro modelo.",
+        "ERR_OPENROUTER_PARAMETERS": "O OpenRouter rejeitou as configurações de imagem/vídeo. Confira o modelo selecionado e as opções suportadas.",
+        "ERR_OPENROUTER_PRIVACY": "Nenhum provedor atende às suas configurações de privacidade do OpenRouter. Revise-as antes de decidir alterá-las.",
+        "ERR_OPENROUTER_RATE_LIMIT": "O limite de solicitações do OpenRouter foi atingido. Aguarde antes de tentar novamente.",
+        "ERR_OPENROUTER_PROVIDER_UNAVAILABLE": "O OpenRouter ou o provedor do modelo falhou. Confira a atividade no OpenRouter antes de repetir para evitar cobranças duplicadas.",
+        "ERR_OPENROUTER_TIMEOUT": "O OpenRouter não respondeu a tempo. Confira a atividade antes de repetir; a geração pode continuar em andamento.",
+        "ERR_OPENROUTER_NETWORK": "Não foi possível receber uma resposta do OpenRouter. Confira a conexão e a atividade no OpenRouter antes de repetir.",
+        "ERR_OPENROUTER_INVALID_RESPONSE": "O OpenRouter retornou uma resposta inválida. Confira a atividade antes de repetir.",
+        "ERR_OPENROUTER_REQUEST_FAILED": "O OpenRouter rejeitou a solicitação. Confira a atividade; os registros do servidor contêm o código de status seguro.",
         "ERR_NO_API_KEY": "Chave de API não configurada. Defina FREEPIK_API_KEY no arquivo .env.local",
         "ERR_GEMINI_API_KEY_NOT_CONFIGURED": "Defina GEMINI_API_KEY para usar o Google AI Studio",
         "ERR_GOOGLE_CLOUD_PROJECT_NOT_CONFIGURED": "Defina GOOGLE_CLOUD_PROJECT para usar o Vertex AI",
@@ -155,6 +169,9 @@
         "modelRequired": "Selecione um modelo"
     },
     "commandBar": {
+        "generationPending": "Gerando com {model}…",
+        "generationWait": "Aguardando o provedor. Pode levar alguns minutos. Mantenha esta página aberta; não envie o pedido novamente.",
+        "generationElapsed": "Tempo decorrido: {seconds} segundos",
         "attachmentsTitle": "Anexos",
         "imageAttachmentsTitle": "Imagens guia",
         "noAttachmentSlots": "Este modelo não possui campos de anexo",

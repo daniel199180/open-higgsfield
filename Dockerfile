@@ -9,6 +9,22 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
+FROM node:22-alpine AS workflow-worker
+WORKDIR /app
+ENV NODE_ENV=production
+ENV OPEN_HIGGSFIELD_STORAGE_DIR=/app/data
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs \
+    && mkdir -p /app/data \
+    && chown nextjs:nodejs /app/data
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/package.json /app/tsconfig.json ./
+USER nextjs
+VOLUME ["/app/data"]
+CMD ["npm", "run", "workflows:worker"]
+
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production

@@ -1,3 +1,4 @@
+import { requireAdminRequest } from "@/lib/api-security";
 import { NextRequest, NextResponse } from "next/server";
 import { getTask, initStore } from "@/lib/task-store";
 import path from "path";
@@ -8,6 +9,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ taskId: string }> }
 ) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
   const { taskId } = await params;
   await initStore();
   const task = getTask(taskId);
@@ -30,7 +32,8 @@ export async function GET(
       headers: {
         "Content-Type": mimeType,
         "Content-Disposition": `${attachment ? "attachment" : "inline"}; filename="${taskId}.${extension}"`,
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
       },
     });
   };
@@ -51,7 +54,8 @@ export async function GET(
           headers: {
             "Content-Type": mimeType,
             "Content-Disposition": `inline; filename="${filename}"`,
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
           },
         });
       }

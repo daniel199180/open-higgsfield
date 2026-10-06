@@ -35,7 +35,9 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts",
     "**/*.ts",
-    "**/*.tsx"
+    "**/*.tsx",
+    ".next-validation/types/**/*.ts",
+    ".next-validation/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

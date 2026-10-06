@@ -16,6 +16,7 @@
 
 # next.js
 /.next/
+/.next-validation/
 /out/
 
 # production
@@ -56,6 +57,13 @@ next-env.d.ts
 /uploads/
 /tasks_history.json
 /tasks_history.json.tmp
+.higgsfield-security/
+provider-connections.enc.json
+/data/
+/workflows/
+/billing/
+/output/playwright/
+/.playwright-cli/
 
 # local screenshots and temporary artifacts
 /image*.png

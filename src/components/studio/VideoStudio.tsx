@@ -115,6 +115,7 @@ export function VideoStudio({ reuseTask }: VideoStudioProps) {
 
       const res = await fetch("/api/generate", {
         method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
         body,
       });
 

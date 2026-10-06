@@ -141,9 +141,16 @@ GOOGLE_CLOUD_LOCATION=global
 GOOGLE_SERVICE_ACCOUNT_JSON=
 AI_GATEWAY_API_KEY=
 CLOUDINARY_URL=
+
+# Opcionales: también puedes conectarlos desde el panel de APIs
+OPENROUTER_API_KEY=
+HIGGSFIELD_API_KEY=
+API_MARKET_API_KEY=
 ```
 
-Abre [http://localhost:3000](http://localhost:3000). Nunca uses `NEXT_PUBLIC_` para credenciales de proveedores.
+Abre [http://localhost:3000](http://localhost:3000). Copia el código de instalación que aparece en la terminal (caduca a los 30 minutos), crea tu contraseña y guarda el código de recuperación que se muestra una sola vez. Después abre **APIs** para añadir OpenRouter, Higgsfield o productos de API.market desde la interfaz. No necesitas una contraseña de administrador en `.env.local`.
+
+En API.market cada producto requiere `workspace` y `slug`; puedes configurar los demás proveedores mientras eliges un producto. Las claves se guardan cifradas en el servidor; no uses `NEXT_PUBLIC_` para secretos. Consulta [Administración y EasyPanel](docs/admin-setup.md) para persistencia, recuperación, migración y límites de compatibilidad.
 
 ### Docker
 
@@ -157,7 +164,7 @@ docker compose up --build
 Usa el botón **Deploy with Vercel** de la parte superior y añade únicamente las credenciales de los proveedores que quieras habilitar. Configura `DATABASE_URL` para conservar el historial y las imágenes generadas en PostgreSQL/Neon. Las cargas temporales, los videos y los workers asíncronos todavía requieren object storage y colas duraderas. Consulta [Despliegue](docs/deployment.md).
 
 > [!WARNING]
-> Open-Higgsfield no incluye autenticación, rate limiting ni límites de gasto por usuario. Protege los despliegues públicos conectados a cuentas facturables.
+> Open-Higgsfield usa una contraseña de administrador para proteger las conexiones de proveedores, pero todavía no incluye autenticación de usuarios finales, rate limiting ni límites de gasto por usuario. Protege los despliegues públicos conectados a cuentas facturables.
 
 ## Comandos
 

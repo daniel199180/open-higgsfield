@@ -5,6 +5,8 @@ import { getTask, pushEvent, saveTasks } from "@/lib/task-store";
 import { getProvider } from "@/providers/registry";
 import type { ProviderId } from "@/providers/types";
 import type { VideoTask } from "@/types";
+import { billingStore } from "@/billing/store";
+import { UsageReportedError } from "@/billing/usage";
 
 const g = global as typeof globalThis & { __activePollers?: Map<string, NodeJS.Timeout> };
 if (!g.__activePollers) g.__activePollers = new Map<string, NodeJS.Timeout>();
@@ -33,6 +35,9 @@ async function pollOnce(taskId: string, elapsed: number): Promise<"continue" | "
             operation,
         });
 
+        // Legacy tasks may predate accounting; start an unknown-cost entry when polled.
+        await billingStore().begin({ id: `studio:${taskId}`, source: "studio", provider: providerId, connection: task.provider_connection_id ?? "environment", model: task.provider_model_id ?? task.model_id, label: task.model_id, media: task.media_type, created: task.created_at, status: result.status });
+        await billingStore().update(`studio:${taskId}`, result.status, result.usage);
         if (result.operation !== undefined) task.provider_operation = result.operation;
         setStatus(taskId, result.status);
         pushEvent(taskId, { type: "status", status: result.status, elapsed });
@@ -66,6 +71,7 @@ async function pollOnce(taskId: string, elapsed: number): Promise<"continue" | "
 
         return "continue";
     } catch (error) {
+        await billingStore().update(`studio:${taskId}`, "UNCONFIRMED", error instanceof UsageReportedError ? error.usage : undefined).catch(() => undefined);
         const message = publicErrorMessage(error);
         task.error_message = message;
         setStatus(taskId, "ERROR");
@@ -80,6 +86,7 @@ export function startPolling(taskId: string) {
 
     const run = async () => {
         if (elapsed >= maxElapsed) {
+            await billingStore().update(`studio:${taskId}`, "UNCONFIRMED").catch(() => undefined);
             setStatus(taskId, "FAILED");
             pushEvent(taskId, { type: "timeout", status: "FAILED", message: "Generation timed out" });
             activePollers.delete(taskId);

@@ -17,7 +17,10 @@ function isPrivateIpv4(address: string): boolean {
 
 function isPrivateIpv6(address: string): boolean {
     const normalized = address.toLowerCase();
-    return normalized === "::"
+    return !/^[23][0-9a-f]{3}:/.test(normalized)
+        || normalized.startsWith("2001:db8:")
+        || normalized.startsWith("2002:")
+        || normalized === "::"
         || normalized === "::1"
         || normalized.startsWith("fc")
         || normalized.startsWith("fd")
@@ -46,7 +49,7 @@ export async function assertSafeRemoteUrl(value: string): Promise<URL> {
         throw new Error("ERR_INVALID_MEDIA_URL");
     }
 
-    const hostname = url.hostname.toLowerCase();
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     if (hostname === "localhost" || hostname.endsWith(".localhost")) {
         throw new Error("ERR_UNSAFE_MEDIA_URL");
     }

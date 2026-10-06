@@ -41,6 +41,45 @@ AI_GATEWAY_API_KEY=
 
 The current catalog includes Google, Black Forest Labs, Recraft, OpenAI, Alibaba Wan and KlingAI models exposed through the gateway.
 
+## OpenRouter
+
+OpenRouter is available as a separate provider with dynamic image and video model discovery:
+
+```dotenv
+OPENROUTER_API_KEY=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_HTTP_REFERER=
+OPENROUTER_APP_TITLE=Open-Higgsfield
+```
+
+The image API returns base64 assets. The video API is asynchronous and uses the shared task poller.
+
+## Higgsfield API
+
+The Higgsfield API can be connected from the **APIs** panel or through environment variables:
+
+```dotenv
+HIGGSFIELD_API_KEY=
+HIGGSFIELD_BASE_URL=https://api.higgsfield.ai
+```
+
+Higgsfield model paths and model-specific fields are normalized into the same image/video generation flow. Reference uploads still require a public URL provider such as Cloudinary when the selected endpoint cannot access local files.
+
+## API.market
+
+API.market is a marketplace, so each product is configured independently in the **APIs** panel. Add the API key, workspace, slug and media type. The panel can discover generation tools automatically; products with custom tool names or asynchronous status tools can specify `toolName` and `statusToolName` explicitly.
+
+```dotenv
+API_MARKET_API_KEY=
+API_MARKET_BASE_URL=https://prod.api.market/api/mcp
+API_MARKET_WORKSPACE=
+API_MARKET_SLUG=
+API_MARKET_MEDIA_TYPE=image
+API_MARKET_TOOL_NAME=
+```
+
+Saved connections are encrypted under `OPEN_HIGGSFIELD_STORAGE_DIR` with an automatically generated master key independent of the administrator password. Use the first-run screen to create the administrator, then the APIs panel to manage connections. EasyPanel requires a persistent `/app/data` volume and `OPEN_HIGGSFIELD_APP_ORIGIN` set to the exact HTTPS origin. See [administration and deployment](admin-setup.md).
+
 ## Reference media uploads
 
 Some providers require a public URL for asynchronous image/video inputs. Open-Higgsfield uses Cloudinary for this handoff.

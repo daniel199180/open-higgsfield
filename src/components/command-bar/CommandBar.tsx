@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,6 +33,7 @@ import { ControlsPill } from "@/components/command-bar/ControlsPill";
 import { VideoControlsPill } from "@/components/command-bar/VideoControlsPill";
 import { AttachmentButton } from "@/components/command-bar/AttachmentButton";
 import { ImageAttachmentButton } from "@/components/command-bar/ImageAttachmentButton";
+import { GenerationPrice } from "@/components/studio/GenerationPrice";
 
 const schema = z.object({ prompt: z.string().max(2000) });
 type FormData = z.infer<typeof schema>;
@@ -79,6 +80,11 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
 
     // ── Shared state ──
     const [apiError, setApiError] = useState<string | null>(null);
+    const [pendingGeneration, setPendingGeneration] = useState<{ model: string; startedAt: number } | null>(null);
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    // State alone does not block two submissions in the same render cycle.
+    const submissionInFlight = useRef(false);
+    const isGenerating = pendingGeneration !== null;
     const [isDragOverlayVisible, setIsDragOverlayVisible] = useState(false);
     const [activeDropTargetId, setActiveDropTargetId] = useState<string | null>(null);
 
@@ -89,6 +95,14 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     const prompt = useWatch({ control, name: "prompt" }) ?? "";
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const dragDepthRef = useRef(0);
+
+    useEffect(() => {
+        if (!pendingGeneration) return;
+        const timer = window.setInterval(() => {
+            setElapsedSeconds(Math.floor((Date.now() - pendingGeneration.startedAt) / 1000));
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, [pendingGeneration]);
 
     const autoResize = useCallback(() => {
         const el = textareaRef.current;
@@ -335,7 +349,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
         setImageFieldValues((prev) => {
             const prevModel = IMAGE_CAPABILITIES[imageModelId] ?? IMAGE_CAPABILITIES[firstImageId];
             const prevFields = prevModel.custom_fields ?? [];
-            const nextFields = m?.custom_fields ?? [];
+            const nextFields = nextModel.custom_fields ?? [];
             const preserved: Record<string, unknown> = {};
             for (const nf of nextFields) {
                 const pf = prevFields.find((f) => f.id === nf.id && f.type === nf.type);
@@ -352,7 +366,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
             }
             return preserved;
         });
-        const m = IMAGE_CAPABILITIES[id];
+        const m = nextModel;
         if (m?.size_ui) {
             // Keep current aspect ratio if the new model supports it
             const supportedRatios = m.size_ui.aspect_ratios.map((ar) => `${ar.w}:${ar.h}`);
@@ -432,52 +446,52 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
         })();
 
     const onSubmit = async (data: FormData) => {
+        if (submissionInFlight.current) return;
+        submissionInFlight.current = true;
         setApiError(null);
-        if (mode === "video") {
+        setElapsedSeconds(0);
+        setPendingGeneration({ model: mode === "video" ? videoModel.label : imageModel.label, startedAt: Date.now() });
+        try {
             const body = new FormData();
-            body.append("model_id", videoModelId);
-            body.append("variant_id", videoVariantId);
             body.append("prompt", data.prompt);
-            body.append("settings", JSON.stringify(videoSettings));
-            for (const att of attachments) {
-                if (att.file) body.append(`file_${att.roleId}`, att.file);
-                else if (att.url) body.append(`url_${att.roleId}`, att.url);
+            if (mode === "video") {
+                body.append("model_id", videoModelId);
+                body.append("variant_id", videoVariantId);
+                body.append("settings", JSON.stringify(videoSettings));
+                for (const att of attachments) {
+                    if (att.file) body.append(`file_${att.roleId}`, att.file);
+                    else if (att.url) body.append(`url_${att.roleId}`, att.url);
+                }
+            } else {
+                body.append("model_id", imageModelId);
+                body.append("size_aspect", sizeAspect);
+                body.append("size_resolution", sizeResolution);
+                body.append("field_values", JSON.stringify(imageFieldValues));
+                for (const [slotId, files] of Object.entries(slotFiles)) {
+                    files.forEach((f) => body.append(`slot_${slotId}`, f));
+                }
             }
-            fetch("/api/generate", { method: "POST", body })
-                .then(async (res) => {
-                    if (!res.ok) {
-                        const json = await res.json().catch(() => ({}));
-                        setApiError(json.error ?? "ERR_GENERIC");
-                    }
-                    revalidateVideoTasks();
-                })
-                .catch(() => setApiError("ERR_GENERIC"));
-        } else {
-            const body = new FormData();
-            body.append("model_id", imageModelId);
-            body.append("prompt", data.prompt);
-            body.append("size_aspect", sizeAspect);
-            body.append("size_resolution", sizeResolution);
-            body.append("field_values", JSON.stringify(imageFieldValues));
-            for (const [slotId, files] of Object.entries(slotFiles)) {
-                files.forEach((f) => body.append(`slot_${slotId}`, f));
+            const res = await fetch(mode === "video" ? "/api/generate" : "/api/generate-image", {
+                method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body,
+            });
+            if (!res.ok) {
+                const json = await res.json().catch(() => ({}));
+                setApiError(json.error ?? "ERR_GENERIC");
             }
-            fetch("/api/generate-image", { method: "POST", body })
-                .then(async (res) => {
-                    if (!res.ok) {
-                        const json = await res.json().catch(() => ({}));
-                        setApiError(json.error ?? "ERR_GENERIC");
-                    }
-                    revalidateImageTasks();
-                })
-                .catch(() => setApiError("ERR_GENERIC"));
+            // Keep the indicator until the returned task is visible in the gallery.
+            await (mode === "video" ? revalidateVideoTasks() : revalidateImageTasks());
+        } catch {
+            setApiError("ERR_GENERATION_CONNECTION_INTERRUPTED");
+        } finally {
+            submissionInFlight.current = false;
+            setPendingGeneration(null);
         }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            handleSubmit(onSubmit)();
+            if (!submissionInFlight.current) void handleSubmit(onSubmit)();
         }
     };
 
@@ -487,6 +501,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
             <AnimatePresence>
                 {apiError && (
                     <motion.div
+                        role="alert"
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
@@ -502,15 +517,27 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                 )}
             </AnimatePresence>
 
+            {pendingGeneration && (
+                <div className="mx-auto mb-3 flex items-center gap-3 rounded-2xl border border-[#d5ff47]/25 bg-[#11150c] px-4 py-3 text-white shadow-xl" style={{ width: "min(70rem, 100%)" }}>
+                    <Loader2 aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin text-[#d5ff47]" />
+                    <div className="min-w-0 flex-1" role="status" aria-live="polite">
+                        <p className="text-sm font-semibold">{tCommand("generationPending", { model: pendingGeneration.model })}</p>
+                        <p className="mt-1 text-xs text-white/65">{tCommand("generationWait")}</p>
+                    </div>
+                    <span className="shrink-0 text-xs tabular-nums text-[#d5ff47]" aria-label={tCommand("generationElapsed", { seconds: elapsedSeconds })}>{elapsedSeconds}s</span>
+                </div>
+            )}
+
             {/* Composer stage — matches Flask grid */}
             <form
+                aria-busy={isGenerating}
                 onSubmit={handleSubmit(onSubmit)}
-                className="pointer-events-auto mx-auto grid gap-3 items-stretch"
-                style={{ width: "min(70rem, 100%)", gridTemplateColumns: "64px minmax(0,1fr)" }}
+                className="pointer-events-auto mx-auto grid grid-cols-1 gap-3 items-stretch sm:grid-cols-[64px_minmax(0,1fr)]"
+                style={{ width: "min(70rem, 100%)" }}
             >
                 {/* Mode rail */}
                 <div
-                    className="rounded-[20px] p-1.5 border border-white/[.08] flex flex-col gap-1.5"
+                    className="rounded-[20px] p-1.5 border border-white/[.08] flex flex-row gap-1.5 sm:flex-col"
                     style={{
                         background: "rgba(12,12,12,.88)",
                         boxShadow: "0 28px 80px rgba(0,0,0,.42)",
@@ -521,6 +548,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                         <button
                             key={m}
                             type="button"
+                            disabled={isGenerating}
                             onClick={() => onModeChange(m)}
                             className={`flex-1 min-h-0 p-1.5 flex flex-col items-center justify-center gap-[5px] rounded-[14px] text-[10px] font-extrabold tracking-[0.02em] cursor-pointer border transition-colors ${mode === m
                                 ? "text-foreground border-white/[.1]"
@@ -549,7 +577,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
 
                 {/* Composer card */}
                 <div
-                    className="rounded-[28px] border border-white/[.08] flex items-stretch gap-3"
+                    className="rounded-[28px] border border-white/[.08] flex flex-col items-stretch gap-3 sm:flex-row"
                     style={{
                         backdropFilter: "blur(26px)",
                         background: "radial-gradient(circle at 92% 82%, rgba(213,255,71,.07), transparent 18%), linear-gradient(90deg, rgba(12,12,12,.96), rgba(20,20,20,.92) 52%, rgba(24,24,24,.88))",
@@ -803,15 +831,15 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                 </>
                             )}
                         </div>
+                        {mode === "image" && <GenerationPrice key={imageModelId} model={imageModel} resolution={sizeResolution || String(imageFieldValues.resolution || "")} aspectRatio={sizeAspect || String(imageFieldValues.aspect_ratio || "")} quality={String(imageFieldValues.quality || "")} count={Number(imageFieldValues.n ?? 1)} />}
                     </div>{/* end content wrapper */}
 
                     {/* Generate button — flex end, large lime */}
                     <button
                         type="submit"
-                        className="shrink-0 self-center border-none rounded-[22px] font-bold cursor-pointer active:scale-95 transition-transform"
+                        disabled={isGenerating}
+                        className="w-full min-h-14 shrink-0 self-center border-none rounded-[22px] font-bold cursor-pointer active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-75 disabled:active:scale-100 sm:w-[146px] sm:min-h-[84px]"
                         style={{
-                            width: 146,
-                            minHeight: 84,
                             background: "linear-gradient(180deg, #d5ff47, #bcf122)",
                             color: "#0b1118",
                             fontFamily: "'Space Grotesk', system-ui, sans-serif",
@@ -820,7 +848,10 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                             boxShadow: "0 20px 42px rgba(188,241,34,.18)",
                         }}
                     >
-                        <span>{tCommon("generate")}</span>
+                        <span className="flex items-center justify-center gap-2">
+                            {isGenerating && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}
+                            {tCommon(isGenerating ? "generating" : "generate")}
+                        </span>
                         <small className="block mt-1 text-[10px] font-extrabold tracking-[.08em] uppercase" style={{ fontFamily: "'Manrope', sans-serif" }}>
                             {mode === "video" ? tCommon("video") : tCommon("image")}
                         </small>

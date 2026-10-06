@@ -7,6 +7,7 @@ import { saveTasks, setTask } from "@/lib/task-store";
 import { shortId } from "@/lib/payload-utils";
 import { resolveProvider } from "@/providers/registry";
 import type { AnyTask, TaskEvent } from "@/types";
+import { trackedSubmit } from "@/billing/tracking";
 
 interface SubmitGenerationInput {
     mediaType: "image" | "video";
@@ -19,8 +20,8 @@ interface SubmitGenerationInput {
 
 export async function submitGeneration(input: SubmitGenerationInput): Promise<string> {
     const taskId = shortId();
-    const { provider, providerId, providerModelId } = resolveProvider(input.capabilities);
-    const submission = await provider.submit({
+    const { provider, providerId, providerModelId, connectionId } = resolveProvider(input.capabilities);
+    const submission = await trackedSubmit(`studio:${taskId}`, "studio", provider, {
         mediaType: input.mediaType,
         modelId: input.modelId,
         providerModelId,
@@ -28,6 +29,7 @@ export async function submitGeneration(input: SubmitGenerationInput): Promise<st
         capabilities: input.capabilities,
         params: input.params,
         media: input.media,
+        connectionId,
     });
 
     const events: TaskEvent[] = [];
@@ -37,6 +39,7 @@ export async function submitGeneration(input: SubmitGenerationInput): Promise<st
         freepik_status: submission.status,
         provider_id: providerId,
         provider_model_id: providerModelId,
+        provider_connection_id: connectionId,
         provider_task_id: submission.providerTaskId,
         provider_operation: "operation" in submission ? submission.operation : undefined,
         freepik_task_id: providerId === "freepik" ? submission.providerTaskId : undefined,

@@ -1,9 +1,11 @@
 import fs from "fs/promises";
 import path from "path";
 import { STORAGE_ROOT } from "@/lib/storage-paths";
+import crypto from "node:crypto";
+import { downloadPublicMedia } from "./media-download";
 
 function shortId() {
-    return Math.random().toString(36).slice(2, 16);
+    return crypto.randomUUID();
 }
 
 const UPLOADS_DIR = path.join(STORAGE_ROOT, "uploads");
@@ -66,6 +68,7 @@ async function uploadToCloudinary(buffer: Buffer, filename: string, mimeType: st
 }
 
 export async function saveInputLocally(buffer: Buffer, ext: string): Promise<string> {
+    if (!/^\.(jpg|jpeg|png|webp|gif|avif|mp4|webm|mov|mp3|wav|m4a|ogg|bin)$/i.test(ext)) throw new Error("ERR_INVALID_MEDIA_TYPE");
     const filename = `${shortId()}${ext}`;
     await fs.writeFile(path.join(UPLOADS_DIR, filename), buffer);
     return `/api/uploaded/${filename}`;
@@ -89,10 +92,9 @@ export async function readDownload(filePath: string): Promise<Buffer> {
 }
 
 export async function downloadUrl(url: string, taskId: string, index: number): Promise<string> {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`ERR_DOWNLOAD_FAILED: ${res.status}`);
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const contentType = res.headers.get("content-type") ?? "";
+    const res = await downloadPublicMedia(url);
+    const buffer = res.data;
+    const contentType = res.mimeType;
     const ext = contentType.includes("jpeg") ? ".jpg"
         : contentType.includes("png") ? ".png"
             : contentType.includes("webp") ? ".webp"

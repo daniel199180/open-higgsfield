@@ -19,7 +19,7 @@ if (!g.__taskMemStore) g.__taskMemStore = new Map<string, TaskEntry>();
 const memStore = g.__taskMemStore;
 
 const SAVE_FIELDS: (keyof AnyTask)[] = [
-    "task_id", "status", "provider_id", "provider_model_id", "provider_task_id", "provider_operation",
+    "task_id", "status", "provider_id", "provider_model_id", "provider_connection_id", "provider_task_id", "provider_operation",
     "freepik_task_id", "freepik_status",
     "prompt", "params", "model_id", "poll_url",
     "created_at", "media_type", "response_style", "result_paths", "result_urls",

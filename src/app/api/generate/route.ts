@@ -1,6 +1,8 @@
+import { requireAdminRequest } from "@/lib/api-security";
+import { generationEndpoint } from "@/lib/generation-request";
 import { NextRequest, NextResponse } from "next/server";
-import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import { getVideoAdapter } from "@/models/adapters/video";
+import { findCapability } from "@/providers/catalog";
 import { submitGeneration } from "@/lib/generation-service";
 import { processImageUpload, processFileUpload, resolveUrl } from "@/lib/media-upload";
 import { publicErrorMessage } from "@/lib/public-error";
@@ -10,11 +12,15 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
+  return generationEndpoint(req, generate);
+}
+async function generate(req: NextRequest) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
   const form = await req.formData();
 
   // ── Parse canonical params from FormData ─────────────────────────────────
   const modelId = String(form.get("model_id") ?? "").trim();
-  const caps = VIDEO_CAPABILITIES[modelId];
+  const caps = await findCapability("video", modelId);
   if (!caps) {
     return NextResponse.json({ error: `ERR_UNKNOWN_MODEL: ${modelId}` }, { status: 400 });
   }
@@ -80,15 +86,15 @@ export async function POST(req: NextRequest) {
           const result = await processFileUpload(buf, file.name, mimeType);
           url = result.remoteUrl;
         }
-      } catch (e) {
-        return NextResponse.json({ error: `Upload failed for ${slot.label}: ${e}` }, { status: 400 });
+      } catch {
+        return NextResponse.json({ error: "No se pudo procesar el archivo de referencia." }, { status: 400 });
       }
     } else if (url) {
       try {
         const resolved = await resolveUrl(url);
         url = resolved.remoteUrl;
-      } catch (e) {
-        return NextResponse.json({ error: `Failed to resolve upload: ${e}` }, { status: 400 });
+      } catch {
+        return NextResponse.json({ error: "La URL de referencia no es válida o no está disponible." }, { status: 400 });
       }
     }
 

@@ -2,6 +2,7 @@ import type { AnyTask, ImageTask, VideoTask } from "@/types";
 import type { GeneratedAsset } from "@/providers/types";
 import { saveDownload } from "@/lib/upload";
 import { isDatabaseConfigured } from "@/lib/database";
+import { downloadPublicMedia } from "./media-download";
 
 function extensionFor(mimeType?: string, url?: string): string {
     const mime = mimeType?.toLowerCase() ?? "";
@@ -17,13 +18,15 @@ function extensionFor(mimeType?: string, url?: string): string {
 }
 
 async function materializeAsset(asset: GeneratedAsset): Promise<{ data: Buffer; mimeType?: string; sourceUrl?: string }> {
-    if (asset.data) return { data: Buffer.from(asset.data), mimeType: asset.mimeType, sourceUrl: asset.url };
+    if (asset.data) {
+        if (asset.data.length > 256 * 1024 * 1024 || asset.mimeType === "image/svg+xml") throw new Error("ERR_INVALID_GENERATED_MEDIA");
+        return { data: Buffer.from(asset.data), mimeType: asset.mimeType, sourceUrl: asset.url };
+    }
     if (!asset.url) throw new Error("ERR_EMPTY_GENERATED_ASSET");
-    const response = await fetch(asset.url);
-    if (!response.ok) throw new Error(`ERR_DOWNLOAD_FAILED: ${response.status}`);
+    const response = await downloadPublicMedia(asset.url);
     return {
-        data: Buffer.from(await response.arrayBuffer()),
-        mimeType: asset.mimeType ?? response.headers.get("content-type") ?? undefined,
+        data: response.data,
+        mimeType: response.mimeType,
         sourceUrl: asset.url,
     };
 }

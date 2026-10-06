@@ -127,6 +127,20 @@
         "reuse": "Reuse"
     },
     "errors": {
+        "ERR_GENERATION_CONNECTION_INTERRUPTED": "The connection was interrupted. Check the gallery and provider activity before retrying; the generation may still be running.",
+        "ERR_OPENROUTER_API_KEY_NOT_CONFIGURED": "Add an OpenRouter API key in APIs.",
+        "ERR_OPENROUTER_AUTH": "OpenRouter rejected the API key. Check it in APIs.",
+        "ERR_OPENROUTER_CREDITS": "OpenRouter reports insufficient credits or an API key spending limit.",
+        "ERR_OPENROUTER_FORBIDDEN": "OpenRouter denied this request. Check model permissions, account restrictions and content policy.",
+        "ERR_OPENROUTER_MODEL_UNAVAILABLE": "This model has no available endpoint on OpenRouter. Select another model.",
+        "ERR_OPENROUTER_PARAMETERS": "OpenRouter rejected the image/video settings. Check the selected model and its supported options.",
+        "ERR_OPENROUTER_PRIVACY": "No provider matches your OpenRouter privacy settings. Review those settings before deciding whether to change them.",
+        "ERR_OPENROUTER_RATE_LIMIT": "OpenRouter's request limit was reached. Wait before trying again.",
+        "ERR_OPENROUTER_PROVIDER_UNAVAILABLE": "OpenRouter or the model provider failed. Check OpenRouter activity before retrying to avoid duplicate charges.",
+        "ERR_OPENROUTER_TIMEOUT": "OpenRouter did not finish in time. Check OpenRouter activity before retrying; the request may still be running.",
+        "ERR_OPENROUTER_NETWORK": "Could not receive a response from OpenRouter. Check connectivity and OpenRouter activity before retrying.",
+        "ERR_OPENROUTER_INVALID_RESPONSE": "OpenRouter returned an unreadable response. Check its activity before retrying.",
+        "ERR_OPENROUTER_REQUEST_FAILED": "OpenRouter rejected the request. Check its activity for details; server logs contain the safe status code.",
         "ERR_NO_API_KEY": "API key not configured. Set FREEPIK_API_KEY in .env.local",
         "ERR_GEMINI_API_KEY_NOT_CONFIGURED": "Set GEMINI_API_KEY to use Google AI Studio",
         "ERR_GOOGLE_CLOUD_PROJECT_NOT_CONFIGURED": "Set GOOGLE_CLOUD_PROJECT to use Vertex AI",
@@ -155,6 +169,9 @@
         "modelRequired": "Please select a model"
     },
     "commandBar": {
+        "generationPending": "Generating with {model}…",
+        "generationWait": "Waiting for the provider. This may take a few minutes. Keep this page open; do not send the request again.",
+        "generationElapsed": "Elapsed: {seconds} seconds",
         "attachmentsTitle": "Attachments",
         "imageAttachmentsTitle": "Guide Images",
         "noAttachmentSlots": "No attachment slots for this model",

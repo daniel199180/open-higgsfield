@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getMessages } from "next-intl/server";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/app/globals.css";
+import { headers } from "next/headers";
 
 const manrope = Manrope({
     subsets: ["latin"],
@@ -74,6 +75,7 @@ export default async function LocaleLayout({
     params: Promise<{ locale: string }>;
 }) {
     const { locale } = await params;
+    await headers(); // Per-request CSP nonce; do not statically cache this document.
     const messages = await getMessages();
 
     return (

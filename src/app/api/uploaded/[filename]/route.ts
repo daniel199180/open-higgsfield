@@ -1,3 +1,4 @@
+import { requireAdminRequest } from "@/lib/api-security";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
@@ -10,6 +11,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ filename: string }> }
 ) {
+    const denied = await requireAdminRequest(); if (denied) return denied;
   const { filename } = await params;
   // Prevent path traversal
   const safe = path.basename(filename);
@@ -25,7 +27,9 @@ export async function GET(
   return new NextResponse(buf, {
     headers: {
       "Content-Type": mimeType,
-      "Cache-Control": "public, max-age=86400",
+      "Cache-Control": "private, no-store",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Disposition": /^(image\/(png|jpeg|gif|webp|avif)|video\/|audio\/)/.test(mimeType) ? "inline" : "attachment",
     },
   });
 }

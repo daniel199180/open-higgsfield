@@ -1,9 +1,12 @@
+import { requireAdminRequest } from "@/lib/api-security";
 import { NextResponse } from "next/server";
-import { IMAGE_CAPABILITIES_LIST, IMAGE_CAPABILITY_GROUPS } from "@/models/capabilities/image";
+import { getCatalog } from "@/providers/catalog";
 
 export async function GET() {
+    const denied = await requireAdminRequest(); if (denied) return denied;
+    const models = await getCatalog("image");
     return NextResponse.json({
-        models: IMAGE_CAPABILITIES_LIST,
-        groups: IMAGE_CAPABILITY_GROUPS,
+        models,
+        groups: [...new Set(models.map((model) => model.group))],
     });
 }

@@ -174,6 +174,7 @@ export function ImageStudio({ reuseTask }: ImageStudioProps) {
 
       const res = await fetch("/api/generate-image", {
         method: "POST",
+        headers: { "Idempotency-Key": crypto.randomUUID() },
         body,
       });
 

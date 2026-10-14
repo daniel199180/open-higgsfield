@@ -3,12 +3,22 @@ import { generationEndpoint } from "@/lib/generation-request";
 import { toJpeg } from "@/lib/media-upload";
 import { NextRequest, NextResponse } from "next/server";
 import { getImageAdapter } from "@/models/adapters/image";
+import { getImageAspectRatios } from "@/models/capabilities/image-helpers";
 import { findCapability } from "@/providers/catalog";
 import type { ImageModelCapability } from "@/models/capabilities/image";
-import { saveInputLocally, uploadToTmpfiles } from "@/lib/upload";
+import { saveInputLocally } from "@/lib/upload";
+import { imageReferenceForProvider } from "@/lib/image-reference";
 import { submitGeneration } from "@/lib/generation-service";
 import { publicErrorMessage } from "@/lib/public-error";
 import type { CanonicalParams, CanonicalMediaInputs } from "@/models/canonical";
+import { attachCarouselTask, prepareCarouselSlide } from "@/social/carousel-server";
+import { brandIdentityPrompt } from "@/social/brand";
+import { attachBrandImageReferences, attachCharacterImageReferences } from "@/social/references";
+import { characterIdentityPrompt, characterSnapshot } from "@/social/characters";
+import type { BrandSystem, Character, CharacterSnapshot } from "@/social/types";
+import { workflowStore } from "@/workflows/store";
+import { WorkflowError } from "@/workflows/types";
+import { requireCompany } from "@/library/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -34,7 +44,43 @@ async function generate(req: NextRequest) {
   }
 
   // ── Build canonical params ────────────────────────────────────────────────
-  const prompt = String(form.get("prompt") ?? "").trim();
+  const carouselProjectId = String(form.get("social_project_id") ?? "");
+  const carouselSlideId = String(form.get("social_slide_id") ?? "");
+  if (Boolean(carouselProjectId) !== Boolean(carouselSlideId)) return NextResponse.json({ error: "Indica el carrusel y su diapositiva." }, { status: 400 });
+  let prompt = String(form.get("prompt") ?? "").trim();
+  let brand: BrandSystem | undefined;
+  let character: CharacterSnapshot | undefined;
+  let companyId: string | undefined;
+  if (carouselProjectId) {
+    if (!/^[0-9a-f-]{36}$/i.test(carouselProjectId) || !/^[0-9a-f-]{36}$/i.test(carouselSlideId)) return NextResponse.json({ error: "Identificador de carrusel inválido." }, { status: 400 });
+    try {
+      const slide = await prepareCarouselSlide(carouselProjectId, carouselSlideId, modelId, String(form.get("size_aspect") ?? "").trim(), String(form.get("size_resolution") ?? ""));
+      prompt = slide.prompt;
+      brand = slide.brand;
+      character = slide.character;
+      companyId = slide.companyId;
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "No se pudo preparar la diapositiva." }, { status: error instanceof WorkflowError ? error.status : 500 });
+    }
+  } else if (form.has("brand_id")) {
+    const brandId = String(form.get("brand_id") ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(brandId)) return NextResponse.json({ error: "Identificador de sistema de diseño inválido." }, { status: 400 });
+    brand = await workflowStore().read<BrandSystem>(`brand:${brandId}`);
+    if (!brand) return NextResponse.json({ error: "El sistema de diseño ya no está disponible." }, { status: 404 });
+    prompt = [prompt, brandIdentityPrompt(brand)].filter(Boolean).join("\n\n");
+  }
+  if (!carouselProjectId) {
+    try { companyId = await requireCompany(String(form.get("company_id") ?? "") || undefined); }
+    catch (error) { return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "Carpeta inválida." }, { status: error instanceof WorkflowError ? error.status : 400 }); }
+  }
+  if (!carouselProjectId && form.has("character_id")) {
+    const characterId = String(form.get("character_id") ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(characterId)) return NextResponse.json({ error: "Identificador de personaje inválido." }, { status: 400 });
+    const saved = await workflowStore().read<Character>(`character:${characterId}`);
+    if (!saved || saved.archivedAt) return NextResponse.json({ error: "El personaje ya no está disponible." }, { status: 404 });
+    character = characterSnapshot(saved);
+  }
+  if (character) prompt = [prompt, characterIdentityPrompt(character)].filter(Boolean).join("\n\n");
   if (caps.prompt_required && !prompt) {
     return NextResponse.json({ error: "ERR_PROMPT_REQUIRED" }, { status: 400 });
   }
@@ -43,14 +89,38 @@ async function generate(req: NextRequest) {
   let fieldValues: Record<string, unknown> = {};
   try { fieldValues = JSON.parse(String(form.get("field_values") ?? "{}")); } catch { }
 
+  const requestedAspect = String(form.get("size_aspect") ?? "").trim();
+  const supportedAspects = getImageAspectRatios(imageCaps).map(([value]) => value);
+  if (supportedAspects.length > 0 && !requestedAspect) {
+    return NextResponse.json({ error: "ERR_IMAGE_ASPECT_RATIO_REQUIRED" }, { status: 400 });
+  }
+  if (requestedAspect && supportedAspects.length > 0 && !supportedAspects.includes(requestedAspect)) {
+    return NextResponse.json({ error: "ERR_INVALID_IMAGE_ASPECT_RATIO" }, { status: 400 });
+  }
+
   const params: CanonicalParams = {
     model_id: modelId,
     prompt,
-    aspect_ratio: String(form.get("size_aspect") ?? imageCaps.size_ui?.default_aspect ?? ""),
+    aspect_ratio: requestedAspect,
     resolution: String(form.get("size_resolution") ?? imageCaps.size_ui?.default_resolution ?? ""),
     seed: Number.isFinite(Number(fieldValues.seed)) ? Number(fieldValues.seed) : undefined,
     field_values: fieldValues,
   };
+
+  try {
+    await attachBrandImageReferences(form, imageCaps, brand);
+    if (character) {
+      if (caps.provider === "higgsfield" && caps.provider_model_id === "higgsfield-ai/soul/v2/standard" && character.soulId && character.soulStatus === "completed" && character.soulConnectionId === caps.provider_connection_id) {
+        fieldValues.custom_reference_id = character.soulId;
+        fieldValues.custom_reference_strength = 1;
+        params.field_values = fieldValues;
+      } else {
+        await attachCharacterImageReferences(form, imageCaps, character);
+      }
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "No se pudieron preparar las referencias del sistema de diseño." }, { status: error instanceof WorkflowError ? error.status : 500 });
+  }
 
   // ── Slot processing ───────────────────────────────────────────────────────
   const media: CanonicalMediaInputs = {};
@@ -71,34 +141,22 @@ async function generate(req: NextRequest) {
     if (files.length === 0) continue;
 
     const slot = caps.media_slots.find((s) => s.id === slotId);
-    if (!slot) {
-      // edit_variant slot (e.g. reference_images for Seedream)
-      const converted: string[] = [];
-      for (const file of files) {
-        const buf = await toJpeg(Buffer.from(await file.arrayBuffer()));
-        const ext = ".jpg";
-        const mimeType = "image/jpeg";
-        const localUrl = await saveInputLocally(buf, ext);
-        slotLocalUrls[slotId] = [...(slotLocalUrls[slotId] ?? []), localUrl];
-        const remoteUrl = await uploadToTmpfiles(buf, `file${ext}`, mimeType);
-        converted.push(remoteUrl);
-      }
-      media.images = { ...media.images, [slotId]: converted.length === 1 ? converted[0] : converted as unknown as string };
-      continue;
-    }
-
     const converted: string[] = [];
     for (const file of files) {
       const buf = await toJpeg(Buffer.from(await file.arrayBuffer()));
       const ext = ".jpg";
-      const mimeType = "image/jpeg";
       const localUrl = await saveInputLocally(buf, ext);
       slotLocalUrls[slotId] = [...(slotLocalUrls[slotId] ?? []), localUrl];
-      const remoteUrl = await uploadToTmpfiles(buf, `file${ext}`, mimeType);
+      const remoteUrl = await imageReferenceForProvider(caps.provider, buf);
       converted.push(remoteUrl);
     }
 
-    media.images = { ...media.images, [slotId]: slot.accept === "b64_only" ? converted[0] : converted[0] };
+    media.images = {
+      ...media.images,
+      [slotId]: (slot?.multiple || (!slot && converted.length > 1))
+        ? converted as unknown as string
+        : converted[0],
+    };
   }
 
   // Validate required slots
@@ -112,14 +170,17 @@ async function generate(req: NextRequest) {
   try {
     const taskId = await submitGeneration({
       mediaType: "image",
+      companyId,
       modelId,
       capabilities: caps,
       params,
       media,
       reuseState: { fieldValues, slotLocalUrls },
     });
+    if (carouselProjectId) await attachCarouselTask(carouselProjectId, carouselSlideId, taskId);
     return NextResponse.json({ task_id: taskId });
   } catch (err) {
+    if (err instanceof WorkflowError) return NextResponse.json({ error: err.message }, { status: err.status });
     const msg = publicErrorMessage(err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

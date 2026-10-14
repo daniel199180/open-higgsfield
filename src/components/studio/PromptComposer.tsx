@@ -69,7 +69,7 @@ export function PromptComposer({
             className={`text-[10px] font-mono tabular-nums ${isOverLimit
                 ? "text-destructive font-bold"
                 : isNearLimit
-                  ? "text-amber-500"
+                  ? "text-red-400"
                   : "text-muted-foreground"
               }`}
           >

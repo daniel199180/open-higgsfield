@@ -33,6 +33,36 @@ export async function saveAsset(data: Buffer, kind: "image" | "video", mime?: st
     return asset;
 }
 
+/** SVG is private and must be sanitized before calling this function. */
+export async function saveVectorAsset(data: Buffer): Promise<Asset> {
+    if (!data.length || data.length > 3 * 1024 * 1024 || !data.toString("utf8", 0, 200).includes("<svg")) throw new WorkflowError("SVG inválido o demasiado grande.");
+    const asset: Asset = { id: crypto.randomUUID(), kind: "vector", mime: "image/svg+xml", bytes: data.length, createdAt: Date.now() };
+    const directory = path.join(WORKFLOW_DIR, "assets");
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const file = await fs.open(path.join(directory, asset.id), "wx", 0o600);
+    try { await file.writeFile(data); await file.sync(); } finally { await file.close(); }
+    await workflowStore().transaction(docs => { docs.set(`asset:${asset.id}`, asset); });
+    return asset;
+}
+
+export function audioMime(data: Buffer): "audio/mpeg" | "audio/wav" {
+    if (data.length < 12 || data.length > 20 * 1024 * 1024) throw new WorkflowError("Audio vacío o demasiado grande.");
+    if (data.subarray(0, 3).toString("ascii") === "ID3" || (data[0] === 0xff && (data[1] & 0xe0) === 0xe0)) return "audio/mpeg";
+    if (data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WAVE") return "audio/wav";
+    throw new WorkflowError("Solo se admite audio MP3 o WAV válido.");
+}
+
+export async function saveAudioAsset(data: Buffer): Promise<Asset> {
+    const mime = audioMime(data);
+    const asset: Asset = { id: crypto.randomUUID(), kind: "audio", mime, bytes: data.length, createdAt: Date.now() };
+    const directory = path.join(WORKFLOW_DIR, "assets");
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const file = await fs.open(path.join(directory, asset.id), "wx", 0o600);
+    try { await file.writeFile(data); await file.sync(); } finally { await file.close(); }
+    await workflowStore().transaction(docs => { docs.set(`asset:${asset.id}`, asset); });
+    return asset;
+}
+
 export async function readAsset(id: string) {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new WorkflowError("Archivo inválido.", 404);
     const asset = await workflowStore().read<Asset>(`asset:${id}`);

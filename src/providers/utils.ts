@@ -17,6 +17,13 @@ export function getImageUrl(media: CanonicalMediaInputs, ...keys: string[]): str
 }
 
 export async function fetchMedia(url: string): Promise<{ data: Uint8Array; mimeType: string }> {
+    if (url.startsWith("data:")) {
+        const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(url);
+        if (!match || match[2].length > 28 * 1024 * 1024) throw new Error("ERR_INVALID_MEDIA_TYPE");
+        const data = Buffer.from(match[2], "base64");
+        if (data.length > 20 * 1024 * 1024) throw new Error("ERR_MEDIA_TOO_LARGE");
+        return { data, mimeType: `image/${match[1]}` };
+    }
     const safeUrl = await assertSafeRemoteUrl(url);
     const response = await fetch(safeUrl, { redirect: "error" });
     if (!response.ok) throw new Error(`ERR_MEDIA_DOWNLOAD: ${response.status}`);

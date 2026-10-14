@@ -1,7 +1,7 @@
 import { IMAGE_CAPABILITIES_LIST } from "@/models/capabilities/image";
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import type { CustomFieldCapability, ModelCapabilities } from "@/models/capabilities/types";
-import { getConnectionForProvider, getStoredConnections, type ProviderConnection } from "@/lib/connection-store";
+import { expandApiMarketConnections, getConnectionForProvider, getStoredConnections, type ProviderConnection } from "@/lib/connection-store";
 import { listApiMarketTools } from "@/providers/api-market-client";
 import { providerFetch } from "./secure-fetch";
 
@@ -188,11 +188,65 @@ async function apiMarketCatalog(connection: ProviderConnection, mediaType: Media
         }));
 }
 
-async function providerConnections(provider: "openrouter" | "higgsfield" | "api-market"): Promise<ProviderConnection[]> {
+const APIMART_VIDEO_MODEL = /(?:video|seedance|kling|wan[-_.]?2|veo|sora|hunyuan|runway|luma|pika|mochi|cogvideo)/i;
+const APIMART_IMAGE_MODEL = /(?:image|imagen|banana|seedream|flux|ideogram|midjourney|recraft|qwen[-_.]?image|z[-_.]?image|grok[-_.]?imagine|stable[-_.]?diffusion|sdxl)/i;
+
+function apimartModelMediaType(model: Record<string, unknown>): MediaType | undefined {
+    const id = String(model.id ?? model.model ?? "");
+    const text = `${id} ${String(model.type ?? "")} ${String(model.modality ?? "")}`;
+    if (APIMART_VIDEO_MODEL.test(text)) return "video";
+    if (APIMART_IMAGE_MODEL.test(text)) return "image";
+    return undefined;
+}
+
+function apimartCapabilities(connection: ProviderConnection, mediaType: MediaType, model: Record<string, unknown>, index: number): ModelCapabilities {
+    const id = String(model.id ?? model.model);
+    const label = String(model.name ?? model.display_name ?? id);
+    const image = mediaType === "image";
+    return baseCapability({
+        id: runtimeId("apimart", mediaType, connection.id, id),
+        label,
+        family: "APIMart",
+        variant: id,
+        group: "APIMart",
+        category: "Generate",
+        provider: "apimart",
+        provider_model_id: id,
+        provider_connection_id: connection.id,
+        provider_mode: image ? "native-image" : "video",
+        duration: image ? false : { options: ["3", "5", "8", "10", "15"], default: "5" },
+        aspect_ratio: { options: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"].map((ratio) => [ratio, ratio] as [string, string]), default: ["1:1", "1:1"] },
+        resolution_variant: image ? { options: ["1k", "2k", "4k"], default: "1k" } : { options: ["480p", "720p", "1080p"], default: "720p" },
+        media_slots: image
+            ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true }]
+            : [{ id: "start_image", label: "Primer fotograma", kind: "image" }, { id: "end_image", label: "Último fotograma", kind: "image" }],
+        custom_fields: image
+            ? [{ id: "quality", label: "Calidad", type: "select", options: ["auto", "low", "medium", "high", "xhigh", "max"], default: "auto" }]
+            : [{ id: "generate_audio", label: "Generar audio", type: "checkbox", default: false }],
+        sort_key: 5500 - index,
+    });
+}
+
+async function apimartCatalog(connection: ProviderConnection, mediaType: MediaType): Promise<ModelCapabilities[]> {
+    const response = await providerFetch("apimart", "/v1/models", {
+        headers: { Authorization: `Bearer ${connection.credentials.apiKey}` },
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return [];
+    const payload = await response.json().catch(() => ({})) as { data?: unknown };
+    if (!Array.isArray(payload.data)) return [];
+    return payload.data
+        .filter((model): model is Record<string, unknown> => !!model && typeof model === "object" && !Array.isArray(model))
+        .filter((model) => apimartModelMediaType(model) === mediaType)
+        .map((model, index) => apimartCapabilities(connection, mediaType, model, index));
+}
+
+async function providerConnections(provider: "openrouter" | "higgsfield" | "api-market" | "apimart"): Promise<ProviderConnection[]> {
     const stored = await getStoredConnections(provider);
     const env = await getConnectionForProvider(provider);
     if (env && !stored.some((connection) => connection.id === env.id)) stored.push(env);
-    return stored.filter((connection) => connection.enabled);
+    const active = stored.filter((connection) => connection.enabled);
+    return provider === "api-market" ? expandApiMarketConnections(active) : active;
 }
 
 export async function getDynamicCatalog(mediaType: MediaType): Promise<ModelCapabilities[]> {
@@ -203,8 +257,13 @@ export async function getDynamicCatalog(mediaType: MediaType): Promise<ModelCapa
     for (const connection of await providerConnections("higgsfield")) {
         result.push(...higgsfieldCatalog(connection, mediaType));
     }
-    for (const connection of await providerConnections("api-market")) {
-        result.push(...await apiMarketCatalog(connection, mediaType));
+    const marketConnections = await providerConnections("api-market");
+    for (let start = 0; start < marketConnections.length; start += 6) {
+        const batch = await Promise.all(marketConnections.slice(start, start + 6).map((connection) => apiMarketCatalog(connection, mediaType).catch(() => [])));
+        result.push(...batch.flat());
+    }
+    for (const connection of await providerConnections("apimart")) {
+        result.push(...await apimartCatalog(connection, mediaType).catch(() => []));
     }
     return result;
 }
@@ -220,7 +279,7 @@ export async function findCapability(mediaType: MediaType, modelId: string): Pro
 }
 
 export function isRuntimeModel(modelId: string): boolean {
-    return /^(openrouter|higgsfield|api-market):(image|video):/.test(modelId);
+    return /^(openrouter|higgsfield|api-market|apimart):(image|video):/.test(modelId);
 }
 
 export function runtimeProviderModelId(modelId: string): string | undefined {

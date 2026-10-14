@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Wand2, Check } from "lucide-react";
+import { Wand2, Check, Search } from "lucide-react";
 import { PillPopover } from "./PillPopover";
-import { IMAGE_CAPABILITIES, IMAGE_CAPABILITY_GROUPS, getImageCapabilitiesByGroup } from "@/models/capabilities/image";
-import { getEditVariant } from "@/models/capabilities/image-helpers";
+import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
+import { getEditVariant, getImageAspectRatios } from "@/models/capabilities/image-helpers";
+import { hasActiveModelApi, modelProviderName } from "@/lib/model-availability";
 
 /** Check if a model accepts image input (media_slots or edit variant slots) */
 function modelAcceptsImageInput(id: string): boolean {
@@ -18,22 +19,31 @@ function modelAcceptsImageInput(id: string): boolean {
 interface ImageModelPillProps {
     modelId: string;
     onModelChange: (modelId: string) => void;
+    carouselMode?: boolean;
     /** Files uploaded for image slots — used to determine if Edit models are available */
     slotFiles: Record<string, File[]>;
 }
 
-export function ImageModelPill({ modelId, onModelChange, slotFiles }: ImageModelPillProps) {
+export function ImageModelPill({ modelId, onModelChange, slotFiles, carouselMode = false }: ImageModelPillProps) {
     const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState("");
     const model = IMAGE_CAPABILITIES[modelId];
-    const label = model?.label ?? modelId;
+    const label = hasActiveModelApi(model) ? model?.label ?? modelId : "Elige modelo";
 
     const hasAnyFiles = Object.values(slotFiles).some((files) => files.length > 0);
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const visibleModels = Object.values(IMAGE_CAPABILITIES)
+        .filter(hasActiveModelApi)
+        .filter((candidate) => !hasAnyFiles || modelAcceptsImageInput(candidate.id))
+        .filter((candidate) => !carouselMode || (!candidate.media_slots.some((slot) => slot.required) && getImageAspectRatios(candidate).length > 0))
+        .filter((candidate) => !normalizedQuery || `${candidate.label} ${candidate.provider_model_id ?? ""} ${modelProviderName(candidate)}`.toLocaleLowerCase().includes(normalizedQuery))
+        .sort((left, right) => (right.sort_key ?? 0) - (left.sort_key ?? 0) || left.label.localeCompare(right.label));
 
     return (
         <PillPopover
             open={open}
-            onOpenChange={setOpen}
-            width="w-72"
+            onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}
+            width="w-80"
             contentClassName="flex max-h-[70dvh] min-h-0 flex-col overflow-hidden"
             trigger={
                 <>
@@ -42,58 +52,13 @@ export function ImageModelPill({ modelId, onModelChange, slotFiles }: ImageModel
                 </>
             }
         >
-            <p className="mb-2 shrink-0 px-1 text-[10px] font-extrabold uppercase tracking-[.08em]" style={{ color: "rgba(244,247,251,.44)" }}>
-                Model
-            </p>
+            <p className="mb-2 shrink-0 px-1 text-[10px] font-extrabold uppercase tracking-[.08em]" style={{ color: "rgba(244,247,251,.44)" }}>Modelos con API activa</p>
+            <label className="mb-3 flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 text-white/60"><Search className="h-3.5 w-3.5" /><input aria-label="Buscar modelos de imagen" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar modelo o proveedor…" className="w-full bg-transparent py-2 text-xs text-white outline-none placeholder:text-white/35" /></label>
             <div className="model-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
-                <div className="space-y-3 pr-1">
-                    {IMAGE_CAPABILITY_GROUPS.map((group) => {
-                        const models = getImageCapabilitiesByGroup(group);
-                        // When files are attached, only show models that accept image input
-                        const visibleModels = hasAnyFiles
-                            ? models.filter((m) => modelAcceptsImageInput(m.id))
-                            : models;
-                        if (visibleModels.length === 0) return null;
-                        return (
-                            <div key={group}>
-                                <p className="text-[11px] font-bold px-1 py-1" style={{ color: "rgba(244,247,251,.72)" }}>{group}</p>
-                                <div className="space-y-0.5">
-                                    {visibleModels.map((m) => {
-                                        const isSelected = m.id === modelId;
-
-                                        return (
-                                            <button
-                                                key={m.id}
-                                                type="button"
-                                                onClick={() => {
-                                                    onModelChange(m.id);
-                                                    setOpen(false);
-                                                }}
-                                                className="w-full flex items-center justify-between rounded-[10px] px-2.5 py-2 text-xs transition-colors cursor-pointer"
-                                                style={{
-                                                    background: isSelected ? "rgba(213,255,71,.1)" : "transparent",
-                                                    color: isSelected ? "#d5ff47" : "#f4f7fb",
-                                                    fontWeight: isSelected ? 700 : 500,
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,.06)";
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    if (!isSelected) e.currentTarget.style.background = "transparent";
-                                                }}
-                                                >
-                                                    <span className="truncate">{m.label}</span>
-                                                    <div className="flex items-center gap-2 shrink-0">
-                                                    {isSelected && <Check className="h-3.5 w-3.5" style={{ color: "#d5ff47" }} />}
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                <div className="space-y-0.5 pr-1">{visibleModels.map((candidate) => {
+                    const isSelected = candidate.id === modelId;
+                    return <button key={candidate.id} type="button" onClick={() => { onModelChange(candidate.id); setOpen(false); }} className="flex w-full items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-xs transition-colors hover:bg-white/[.06]" style={{ background: isSelected ? "rgba(255,77,77,.1)" : "transparent", color: isSelected ? "#ff4d4d" : "#f4f7fb", fontWeight: isSelected ? 700 : 500 }}><span className="min-w-0 flex-1 truncate">{candidate.label}</span><span className="shrink-0 rounded-md border border-white/10 bg-white/[.04] px-1.5 py-0.5 text-[10px] font-medium text-white/55">{modelProviderName(candidate)}</span>{isSelected && <Check className="h-3.5 w-3.5 shrink-0" style={{ color: "#ff4d4d" }} />}</button>;
+                })}{visibleModels.length === 0 && <p className="px-2 py-5 text-center text-xs leading-relaxed text-white/45">{normalizedQuery ? "No hay modelos activos que coincidan." : "No hay modelos de imagen con una API activa."}</p>}</div>
             </div>
         </PillPopover>
     );

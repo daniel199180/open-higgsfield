@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
         description: "Open-source multi-provider AI image and video generation studio.",
         start_url: "/",
         display: "standalone",
-        background_color: "#060606",
-        theme_color: "#d5ff47",
+        background_color: "#000000",
+        theme_color: "#000000",
         icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml" }],
     };
 }

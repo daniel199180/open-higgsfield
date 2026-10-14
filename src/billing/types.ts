@@ -31,7 +31,7 @@ export interface UsageRecord extends GenerationUsage {
     connection: string;
     model: string;
     label: string;
-    media: "image" | "video";
+    media: "image" | "video" | "audio";
     source: "studio" | "workflow";
     created: string;
     status: string;

@@ -68,9 +68,9 @@ export function ControlsPill({ model, fieldValues, onFieldChange, count }: Contr
                                                 onClick={() => onFieldChange(field.id, o)}
                                                 className="rounded-[8px] border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[.04em] transition-colors cursor-pointer"
                                                 style={active ? {
-                                                    background: "rgba(213,255,71,.14)",
-                                                    borderColor: "rgba(213,255,71,.4)",
-                                                    color: "#d5ff47",
+                                                    background: "rgba(255,77,77,.14)",
+                                                    borderColor: "rgba(255,77,77,.4)",
+                                                    color: "#ff4d4d",
                                                 } : {
                                                     background: "rgba(255,255,255,.04)",
                                                     borderColor: "rgba(255,255,255,.1)",

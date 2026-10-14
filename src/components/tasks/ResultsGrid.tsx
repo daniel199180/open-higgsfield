@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Inbox, Download, Trash2, Clock, AlertCircle, Volume2, VolumeX } from "lucide-react";
+import { Inbox, Download, Trash2, Clock, AlertCircle, Volume2, VolumeX, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
@@ -39,7 +39,7 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
     const t = useTranslations("tasks");
     const { tasks: videoTasks } = useVideoTasks();
     const { tasks: imageTasks } = useImageTasks();
-    const [lightbox, setLightbox] = useState<{ images: string[]; index: number; modelId?: string; prompt?: string; mediaType?: "image" | "video" } | null>(null);
+    const [lightbox, setLightbox] = useState<{ images: string[]; index: number; modelId?: string; prompt?: string; mediaType?: "image" | "video"; sourceTaskId?: string } | null>(null);
 
     const handleDeleteVideo = useCallback(async (id: string) => {
         await fetch(`/api/tasks/${id}`, { method: "DELETE" });
@@ -51,8 +51,8 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
         revalidateImageTasks();
     }, []);
 
-    const openLightbox = useCallback((images: string[], index: number, modelId?: string, prompt?: string, mediaType?: "image" | "video") => {
-        setLightbox({ images, index, modelId, prompt, mediaType });
+    const openLightbox = useCallback((images: string[], index: number, modelId?: string, prompt?: string, mediaType?: "image" | "video", sourceTaskId?: string) => {
+        setLightbox({ images, index, modelId, prompt, mediaType, sourceTaskId });
     }, []);
 
     // Build flat list of all completed video URLs for cross-video navigation
@@ -138,6 +138,7 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
                     modelId={lightbox.modelId}
                     prompt={lightbox.prompt}
                     mediaType={lightbox.mediaType}
+                    sourceTaskId={lightbox.sourceTaskId}
                     onClose={() => setLightbox(null)}
                     onNext={() => setLightbox((lb) => {
                         if (!lb) return null;
@@ -178,11 +179,27 @@ function VideoResultCard({
     const [videoUrls, setVideoUrls] = useState<string[]>(task.video_urls ?? []);
     const [hasDownload, setHasDownload] = useState(!!task.video_path);
     const [errorMsg, setErrorMsg] = useState(task.error_message ?? "");
+    const [recovering, setRecovering] = useState(false);
     const [elapsed, setElapsed] = useState(0);
     const [muted, setMuted] = useState(true);
     const videoRef = useRef<HTMLVideoElement>(null);
     const isDone = useRef(["COMPLETED", "FAILED", "ERROR", "CANCELLED"].includes(task.status ?? task.freepik_status ?? ""));
     const modelLabel = VIDEO_CAPABILITIES[task.model_id]?.label ?? task.model_id;
+
+    async function recoverVideo() {
+        setRecovering(true);
+        try {
+            const response = await fetch(`/api/tasks/${task.task_id}/recover`, { method: "POST" });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error ?? "No se pudo recuperar el video.");
+            setStatus("COMPLETED");
+            setHasDownload(true);
+            setErrorMsg("");
+            void revalidateVideoTasks();
+        } catch (error) {
+            setErrorMsg(error instanceof Error ? error.message : "No se pudo recuperar el video.");
+        } finally { setRecovering(false); }
+    }
 
     useEffect(() => {
         if (isDone.current) return;
@@ -238,7 +255,7 @@ function VideoResultCard({
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                     <motion.div
                         className="h-9 w-9 rounded-full"
-                        style={{ border: "2.5px solid #d5ff47", borderTopColor: "transparent" }}
+                        style={{ border: "2.5px solid #ff4d4d", borderTopColor: "transparent" }}
                         animate={{ rotate: 360 }}
                         transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                     />
@@ -287,6 +304,7 @@ function VideoResultCard({
                     <div className="text-center px-4">
                         <AlertCircle className="h-6 w-6 mx-auto mb-1" style={{ color: "#ff6b6b" }} />
                         <p className="text-[11px] line-clamp-2" style={{ color: "#ff6b6b" }}>{errorMsg}</p>
+                        {task.provider_id === "openrouter" && task.provider_operation && <button type="button" disabled={recovering} onClick={event => { event.stopPropagation(); void recoverVideo(); }} className="relative z-10 mt-3 inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-black/70 px-3 py-1.5 text-[11px] text-white transition hover:border-[#ff4d4d] disabled:opacity-50"><RefreshCw className={`h-3 w-3 ${recovering ? "animate-spin" : ""}`} />{recovering ? "Recuperando…" : "Recuperar video"}</button>}
                     </div>
                     <div className="absolute bottom-2 left-2 text-[9px] font-bold px-2 py-0.5 rounded-md" style={{ background: "rgba(0,0,0,.5)", color: "rgba(244,247,251,.72)" }}>
                         {modelLabel}
@@ -332,7 +350,7 @@ function ImageResultCard({
 }: {
     task: ImageTask;
     onDelete: (id: string) => void;
-    onLightbox: (urls: string[], index: number, modelId?: string, prompt?: string) => void;
+    onLightbox: (urls: string[], index: number, modelId?: string, prompt?: string, mediaType?: "image" | "video", sourceTaskId?: string) => void;
     t: ReturnType<typeof useTranslations<"tasks">>;
 }) {
     const [status, setStatus] = useState(task.status ?? task.freepik_status ?? "CREATED");
@@ -384,7 +402,7 @@ function ImageResultCard({
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                     <motion.div
                         className="h-9 w-9 rounded-full"
-                        style={{ border: "2.5px solid #d5ff47", borderTopColor: "transparent" }}
+                        style={{ border: "2.5px solid #ff4d4d", borderTopColor: "transparent" }}
                         animate={{ rotate: 360 }}
                         transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                     />
@@ -438,7 +456,7 @@ function ImageResultCard({
                     exit={{ opacity: 0, scale: 0.95 }}
                     className="group relative rounded-[18px] overflow-hidden shrink-0 cursor-pointer"
                     style={{ height: 240 }}
-                    onClick={() => onLightbox(images, idx, modelLabel, task.prompt)}
+                    onClick={() => onLightbox(images, idx, task.model_id, task.prompt, "image", task.task_id)}
                 >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img

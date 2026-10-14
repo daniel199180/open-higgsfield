@@ -1,6 +1,6 @@
 # Administración desde la interfaz
 
-Esta edición está pensada para un único administrador y una instancia de Node.js con almacenamiento persistente. OpenRouter, Higgsfield y productos de API.market se configuran desde **APIs**. Los proveedores originales y Cloudinary conservan por ahora su configuración por variables de entorno.
+Esta edición está pensada para un único administrador y una instancia de Node.js con almacenamiento persistente. OpenRouter, Higgsfield, APIMart y API.market se configuran desde **Menú → APIs**. APIMart usa una sola clave y obtiene los modelos de imagen/vídeo que la cuenta puede usar. Una conexión de API.market puede incluir varios productos con una sola clave; también se conservan las conexiones anteriores de un solo producto. Los proveedores originales y Cloudinary conservan por ahora su configuración por variables de entorno.
 
 ## Primer inicio local
 
@@ -48,7 +48,7 @@ El nuevo acceso se crea desde la interfaz aunque exista `OPEN_HIGGSFIELD_ADMIN_P
 - La contraseña usa scrypt con sal aleatoria, N=131072/r=8/p=1. Las claves maestras, de proveedor y de recuperación son independientes. No se registran API keys, contraseñas ni sesiones.
 - Las credenciales solo se envían a los hosts oficiales permitidos. Las peticiones autenticadas no siguen redirecciones; una URL de estado fuera del proveedor se rechaza. Las descargas de resultados no llevan claves y validan cada destino y su dirección IP.
 - Las solicitudes de generación aceptan `Idempotency-Key`. La interfaz añade uno por envío. Un reenvío con el mismo identificador conserva su resultado durante 24 horas; una operación incierta queda bloqueada para evitar cobros duplicados. No se reintentan automáticamente peticiones de generación. No es una garantía de facturación del proveedor.
-- OpenRouter descubre su catálogo de imágenes/video; Higgsfield usa los modelos integrados en el adaptador. API.market descubre herramientas por producto: los productos con esquemas especiales pueden necesitar adaptación. Una clave válida no garantiza acceso a todos los modelos ni a todas las funciones.
+- OpenRouter y APIMart descubren su catálogo de imágenes/vídeo con la clave configurada; Higgsfield usa los modelos integrados en el adaptador. API.market permite buscar productos con suscripción activa, seleccionar varios bajo una misma clave y descubrir sus herramientas por producto. Si la búsqueda falla, introduce la URL MCP del producto manualmente. Los productos con esquemas especiales pueden necesitar adaptación; una clave válida no garantiza acceso a todos los modelos ni a todas las funciones.
 - Las referencias subidas que requieren URL pública usan Cloudinary, configurado por entorno. La integración de Cloudinary en el panel no forma parte de este cambio.
 - La rotación automatizada de la clave maestra no está implementada; sí se pueden sustituir las API keys y cambiar la contraseña desde el panel.
 

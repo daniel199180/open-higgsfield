@@ -158,7 +158,7 @@ function SlotUpload({ slot, file, onFile, t }: SlotUploadProps) {
                             setShowUrl(false);
                         }}
                         className="rounded-[8px] px-2 py-1 text-[10px] font-bold cursor-pointer"
-                        style={{ background: "rgba(213,255,71,.12)", color: "#d5ff47" }}
+                        style={{ background: "rgba(255,77,77,.12)", color: "#ff4d4d" }}
                     >
                         {t("add")}
                     </button>

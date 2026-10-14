@@ -8,11 +8,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const denied = await authorizeRequest(req); if (denied) return denied;
     try {
         const { asset, data } = await readAsset((await params).id);
-        const extension = asset.mime === "video/mp4" ? "mp4" : asset.mime === "video/webm" ? "webm" : "png";
+        const extension = asset.mime === "video/mp4" ? "mp4" : asset.mime === "video/webm" ? "webm" : asset.mime === "image/svg+xml" ? "svg" : asset.mime === "audio/mpeg" ? "mp3" : asset.mime === "audio/wav" ? "wav" : "png";
         const headers: Record<string, string> = {
             "Content-Type": asset.mime, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox", "Accept-Ranges": "bytes",
-            "Content-Disposition": `${req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${asset.id}.${extension}"`,
+            "Content-Disposition": `${asset.kind === "vector" || req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${asset.id}.${extension}"`,
         };
         const range = req.headers.get("range");
         if (range) {

@@ -18,9 +18,10 @@ export function apiMarketEndpoint(config: Record<string, string>): string {
     return `${base}/${workspace}/${slug}`;
 }
 
-async function rpc<T>(endpoint: string, apiKey: string, method: string, params?: Record<string, unknown>): Promise<T> {
+async function rpc<T>(endpoint: string, apiKey: string, method: string, params?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const response = await providerFetch("api-market", endpoint, {
         method: "POST",
+        ...(signal ? { signal } : {}),
         headers: {
             "Content-Type": "application/json",
             "x-api-market-key": apiKey,
@@ -49,7 +50,7 @@ export async function initializeApiMarket(config: Record<string, string>, apiKey
 }
 
 export async function listApiMarketTools(config: Record<string, string>, apiKey: string): Promise<ApiMarketTool[]> {
-    const result = await rpc<{ tools?: ApiMarketTool[] }>(apiMarketEndpoint(config), apiKey, "tools/list", {});
+    const result = await rpc<{ tools?: ApiMarketTool[] }>(apiMarketEndpoint(config), apiKey, "tools/list", {}, AbortSignal.timeout(15_000));
     return Array.isArray(result.tools) ? result.tools : [];
 }
 

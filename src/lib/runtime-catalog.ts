@@ -3,15 +3,15 @@ import { VIDEO_CAPABILITIES, VIDEO_CAPABILITY_GROUPS } from "@/models/capabiliti
 import type { ModelCapabilities } from "@/models/capabilities/types";
 
 export function mergeRuntimeCatalog(models: ModelCapabilities[]): void {
-    const runtime = (id: string) => /^(openrouter|higgsfield|api-market):/.test(id);
+    const runtime = (id: string) => /^(openrouter|higgsfield|api-market|apimart):/.test(id);
     for (const id of Object.keys(IMAGE_CAPABILITIES)) if (runtime(id)) delete IMAGE_CAPABILITIES[id];
     for (const id of Object.keys(VIDEO_CAPABILITIES)) if (runtime(id)) delete VIDEO_CAPABILITIES[id];
     for (let index = IMAGE_CAPABILITIES_LIST.length - 1; index >= 0; index--) if (runtime(IMAGE_CAPABILITIES_LIST[index].id)) IMAGE_CAPABILITIES_LIST.splice(index, 1);
     for (const groups of [IMAGE_CAPABILITY_GROUPS, VIDEO_CAPABILITY_GROUPS]) {
-        for (let index = groups.length - 1; index >= 0; index--) if (/^(OpenRouter|Higgsfield|API.market)/.test(groups[index])) groups.splice(index, 1);
+        for (let index = groups.length - 1; index >= 0; index--) if (/^(OpenRouter|Higgsfield|API.market|APIMart)/.test(groups[index])) groups.splice(index, 1);
     }
     for (const model of models) {
-        if (model.provider === "openrouter" || model.provider === "higgsfield" || model.provider === "api-market") {
+        if (model.provider === "openrouter" || model.provider === "higgsfield" || model.provider === "api-market" || model.provider === "apimart") {
             if (model.id.includes(":image:")) {
                 const imageModel = { ...model, has_edit_variant: false } as ImageModelCapability;
                 IMAGE_CAPABILITIES[model.id] = imageModel;

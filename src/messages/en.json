@@ -151,6 +151,8 @@
         "ERR_UNKNOWN_MODEL": "Unknown model",
         "ERR_PROMPT_REQUIRED": "Prompt is required for this model",
         "ERR_PROMPT_TOO_LONG": "Prompt exceeds model limit ({max} characters)",
+        "ERR_IMAGE_ASPECT_RATIO_REQUIRED": "Choose an image format before generating.",
+        "ERR_INVALID_IMAGE_ASPECT_RATIO": "This image format is not supported by the selected model.",
         "ERR_MISSING_ATTACHMENT": "Missing required attachment: {label}",
         "ERR_ATTACHMENT_GROUP_MIN": "Provide at least {min} attachment(s) for {label}",
         "ERR_ATTACHMENT_GROUP_MAX": "Provide at most {max} attachment(s) for {label}",

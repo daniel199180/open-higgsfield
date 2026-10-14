@@ -7,7 +7,7 @@ import { UsageReportedError } from "./usage";
 
 /** Durable intent before a billable call; costs survive failed downloads and gallery deletion. */
 export async function trackedSubmit(id: string, source: "studio" | "workflow", provider: GenerationProvider, request: ProviderGenerationRequest): Promise<ProviderSubmission> {
-    const connection = ["openrouter", "higgsfield", "api-market"].includes(provider.id)
+    const connection = ["openrouter", "openai", "higgsfield", "api-market", "apimart"].includes(provider.id)
         ? await getConnectionForProvider(provider.id, request.connectionId) : undefined;
     const connectionId = connection?.id ?? request.connectionId ?? "environment";
     const values = request.params.field_values ?? {};

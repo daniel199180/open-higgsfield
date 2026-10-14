@@ -28,13 +28,13 @@ export function TogglePill({ label, icon, value, onChange }: TogglePillProps) {
                     width: 30,
                     height: 18,
                     padding: "0 3px",
-                    background: value ? "#d5ff47" : "rgba(255,255,255,.14)",
+                    background: value ? "#c62828" : "rgba(255,255,255,.14)",
                 }}
             >
                 <span
                     className="h-3 w-3 rounded-full shadow-sm transition-transform shrink-0"
                     style={{
-                        background: value ? "#0b1118" : "#fff",
+                        background: "#fff",
                         transform: value ? "translateX(12px)" : "translateX(0)",
                     }}
                 />

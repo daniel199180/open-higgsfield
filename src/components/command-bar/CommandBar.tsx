@@ -2,18 +2,19 @@
 
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Loader2 } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { AlertCircle, Layers3, Loader2 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
-import { getEditVariant } from "@/models/capabilities/image-helpers";
+import { getEditVariant, getImageAspectRatios } from "@/models/capabilities/image-helpers";
 import { getVideoOverrides, getDurations, getAspectRatios, hasAttachments as videoHasAttachments } from "@/models/capabilities/video-helpers";
 import type { AttachmentRole } from "@/models/capabilities/video-helpers";
 import type { MediaSlotCapability } from "@/models/capabilities/types";
+import { hasActiveModelApi } from "@/lib/model-availability";
 import { revalidateVideoTasks } from "@/hooks/useVideoTasks";
 import { revalidateImageTasks } from "@/hooks/useImageTasks";
 import { defaultSettings } from "@/components/studio/SettingsPanel";
@@ -34,16 +35,50 @@ import { VideoControlsPill } from "@/components/command-bar/VideoControlsPill";
 import { AttachmentButton } from "@/components/command-bar/AttachmentButton";
 import { ImageAttachmentButton } from "@/components/command-bar/ImageAttachmentButton";
 import { GenerationPrice } from "@/components/studio/GenerationPrice";
+import { DesignSystemPill } from "@/components/command-bar/DesignSystemPill";
+import { CharacterPill } from "@/components/command-bar/CharacterPill";
+import { CompanySelect, useCompanySelection } from "@/components/command-bar/CompanySelect";
+import type { Character } from "@/social/types";
+import type { BrandSystem } from "@/social/types";
+import type { SocialProject } from "@/social/types";
+import { brandLogoAssetIds } from "@/social/brand";
+import { PillPopover } from "@/components/command-bar/PillPopover";
+import { StudioModePill, type StudioMode } from "@/components/studio/StudioModePill";
+import { LogoComposer } from "@/components/command-bar/LogoComposer";
 
 const schema = z.object({ prompt: z.string().max(2000) });
 type FormData = z.infer<typeof schema>;
 
+async function waitForImageResult(taskId: string, onProgress: (message: string) => void): Promise<Blob> {
+    const maxAttempts = 150;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const response = await fetch("/api/image-tasks", { cache: "no-store" });
+        if (!response.ok) throw new Error("No se pudo consultar el resultado base.");
+        const tasks = await response.json() as Array<{ task_id: string; status?: string; _done?: boolean; result_urls?: string[]; error_message?: string }>;
+        const task = tasks.find(item => item.task_id === taskId);
+        if (task?._done || ["COMPLETED", "FAILED", "ERROR", "CANCELLED"].includes(task?.status ?? "")) {
+            if (task.status !== "COMPLETED" || !task.result_urls?.[0]) throw new Error(task.error_message || "La imagen base no se pudo generar; no se crearán las variantes.");
+            const imageResponse = await fetch(`/api/download/${encodeURIComponent(taskId)}?index=0`, { cache: "no-store" });
+            if (!imageResponse.ok) throw new Error("No se pudo leer la imagen base para adaptar los formatos.");
+            return imageResponse.blob();
+        }
+        onProgress(`Esperando la imagen principal (${Math.min(attempt + 1, maxAttempts)}/${maxAttempts})…`);
+        await new Promise(resolve => window.setTimeout(resolve, 2000));
+    }
+    throw new Error("La imagen principal sigue procesándose. Revisa la galería; puedes volver a intentar las variantes cuando termine.");
+}
+
 interface CommandBarProps {
-    mode: "video" | "image";
-    onModeChange: (mode: "video" | "image") => void;
+    mode: StudioMode;
+    onModeChange: (mode: StudioMode) => void;
 }
 
 export function CommandBar({ mode, onModeChange }: CommandBarProps) {
+    return mode === "logo" ? <LogoComposer onModeChange={onModeChange} /> : mode === "audio" ? null : <MediaCommandBar mode={mode} onModeChange={onModeChange} />;
+}
+
+function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "video" | "image" | "carousel" }) {
+    const locale = useLocale();
     const t = useTranslations("studio");
     const tErrors = useTranslations("errors");
     const tCommon = useTranslations("common");
@@ -61,14 +96,10 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     // ── Image state ──
     const firstImageId = Object.keys(IMAGE_CAPABILITIES)[0];
     const [imageModelId, setImageModelId] = useState(firstImageId);
-    const [sizeAspect, setSizeAspect] = useState(() => {
-        const m = IMAGE_CAPABILITIES[firstImageId];
-        if (m?.size_ui) return m.size_ui.default_aspect ?? "";
-        const arField = m?.custom_fields?.find((f) => f.id === "aspect_ratio" && f.type === "select");
-        const defOpt = arField?.default ? String(arField.default) : (arField?.options?.[0] ?? "");
-        const match = defOpt.match(/_(\.?\d+)_(\d+)$/);
-        return match ? `${match[1]}:${match[2]}` : defOpt;
-    });
+    // Never silently pick a provider default (many default to 16:9). The user chooses the canvas.
+    const [selectedImageFormats, setSelectedImageFormats] = useState<string[]>([]);
+    const [carouselSlideCount, setCarouselSlideCount] = useState(5);
+    const [carouselCountOpen, setCarouselCountOpen] = useState(false);
     const [sizeResolution, setSizeResolution] = useState(() => {
         const m = IMAGE_CAPABILITIES[firstImageId];
         if (m?.size_ui) return m.size_ui.default_resolution ?? "";
@@ -77,10 +108,36 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     });
     const [imageFieldValues, setImageFieldValues] = useState<Record<string, unknown>>({});
     const [slotFiles, setSlotFiles] = useState<Record<string, File[]>>({});
+    const [brands, setBrands] = useState<BrandSystem[]>([]);
+    const [selectedBrandId, setSelectedBrandId] = useState("");
+    const [brandsLoading, setBrandsLoading] = useState(true);
+    const [characters, setCharacters] = useState<Character[]>([]);
+    const [selectedCharacterId, setSelectedCharacterId] = useState("");
+    const companySelection = useCompanySelection();
+
+    const loadCharacters = useCallback(async () => {
+        try {
+            const response = await fetch("/api/characters", { cache: "no-store" });
+            if (!response.ok) return;
+            const data = await response.json() as { characters?: Character[] };
+            setCharacters(data.characters ?? []);
+            setSelectedCharacterId(current => (data.characters ?? []).some(item => item.id === current) ? current : "");
+        } catch { /* Character selection is optional. */ }
+    }, []);
+    useEffect(() => {
+        void loadCharacters();
+        window.addEventListener("open-higgsfield:characters-updated", loadCharacters);
+        return () => window.removeEventListener("open-higgsfield:characters-updated", loadCharacters);
+    }, [loadCharacters]);
+
+    useEffect(() => {
+        if (mode === "carousel") setSelectedImageFormats(current => current.slice(0, 1));
+    }, [mode]);
 
     // ── Shared state ──
     const [apiError, setApiError] = useState<string | null>(null);
-    const [pendingGeneration, setPendingGeneration] = useState<{ model: string; startedAt: number } | null>(null);
+    const [apiErrorDetail, setApiErrorDetail] = useState<string | null>(null);
+    const [pendingGeneration, setPendingGeneration] = useState<{ model: string; startedAt: number; progress?: string } | null>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     // State alone does not block two submissions in the same render cycle.
     const submissionInFlight = useRef(false);
@@ -95,6 +152,36 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     const prompt = useWatch({ control, name: "prompt" }) ?? "";
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const dragDepthRef = useRef(0);
+
+    const loadBrands = useCallback(async () => {
+        try {
+            const response = await fetch("/api/social", { cache: "no-store" });
+            if (!response.ok) return;
+            const data = await response.json() as { brands?: BrandSystem[] };
+            const nextBrands = Array.isArray(data.brands) ? data.brands : [];
+            setBrands(nextBrands);
+            setSelectedBrandId((current) => {
+                const remembered = current || window.localStorage.getItem("open-higgsfield:selected-brand") || "";
+                return nextBrands.some((brand) => brand.id === remembered) ? remembered : "";
+            });
+        } catch {
+            // Social design systems are optional; generation remains available without one.
+        } finally {
+            setBrandsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadBrands();
+        window.addEventListener("open-higgsfield:social-brands-updated", loadBrands);
+        return () => window.removeEventListener("open-higgsfield:social-brands-updated", loadBrands);
+    }, [loadBrands]);
+
+    const selectBrand = useCallback((id: string) => {
+        setSelectedBrandId(id);
+        if (id) window.localStorage.setItem("open-higgsfield:selected-brand", id);
+        else window.localStorage.removeItem("open-higgsfield:selected-brand");
+    }, []);
 
     useEffect(() => {
         if (!pendingGeneration) return;
@@ -116,6 +203,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     const videoOverrides = getVideoOverrides(videoModelId);
     const imageModel = IMAGE_CAPABILITIES[imageModelId] ?? IMAGE_CAPABILITIES[firstImageId];
     const imageEditVariant = getEditVariant(imageModel);
+    const hasSelectedActiveApi = hasActiveModelApi(mode === "video" ? videoModel : imageModel);
 
     const imageUploadSlots = useMemo<MediaSlotCapability[]>(() => {
         const editSlots = (imageEditVariant?.slots ?? []).map((slot) => ({ ...slot, required: false }));
@@ -144,7 +232,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     }, [videoModel, videoOverrides]);
 
     const dropTargets = useMemo(() => {
-        if (mode === "image") {
+        if (mode !== "video") {
             return buildGroupedDropTargets(slotsToDropDescriptors(imageUploadSlots));
         }
         return buildGroupedDropTargets(videoRoleDescriptors);
@@ -279,7 +367,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
         const files = Array.from(event.dataTransfer.files ?? []);
         if (files.length === 0) return;
 
-        if (mode === "image") {
+        if (mode !== "video") {
             applyImageDrop(target, files);
             return;
         }
@@ -345,6 +433,20 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
         setSlotFiles((current) => remapSlotFilesOnModelSwitch(current, previousSlots, nextSlots));
 
         setImageModelId(id);
+        const aspectOptions = getImageAspectRatios(nextModel).map(([value]) => value);
+        setSelectedImageFormats((current) => {
+            const supported = current.filter((ratio) => aspectOptions.includes(ratio));
+            if (supported.length) return nextSlots.some((slot) => slot.kind === "image") ? supported : supported.slice(0, 1);
+
+            // A newly selected provider model must never inherit an empty
+            // format. Dynamic catalogs expose their default on aspect_ratio.
+            const configuredDefault = nextModel.size_ui?.default_aspect
+                ?? (nextModel.aspect_ratio !== false ? nextModel.aspect_ratio.default?.[1] : undefined);
+            const defaultAspect = configuredDefault && aspectOptions.includes(configuredDefault)
+                ? configuredDefault
+                : aspectOptions[0];
+            return defaultAspect ? [defaultAspect] : [];
+        });
         // Preserve field values for fields that exist in both old and new model (same id + type)
         setImageFieldValues((prev) => {
             const prevModel = IMAGE_CAPABILITIES[imageModelId] ?? IMAGE_CAPABILITIES[firstImageId];
@@ -368,33 +470,12 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
         });
         const m = nextModel;
         if (m?.size_ui) {
-            // Keep current aspect ratio if the new model supports it
-            const supportedRatios = m.size_ui.aspect_ratios.map((ar) => `${ar.w}:${ar.h}`);
-            if (!supportedRatios.includes(sizeAspect)) {
-                setSizeAspect(m.size_ui.default_aspect ?? "");
-            }
             // Keep current resolution if supported
             const supportedRes = m.size_ui.resolutions.map((r) => r.id);
             if (!supportedRes.includes(sizeResolution)) {
                 setSizeResolution(m.size_ui.default_resolution ?? "");
             }
         } else {
-            const arField = m?.custom_fields?.find((f) => f.id === "aspect_ratio" && f.type === "select");
-            if (arField?.options) {
-                // Convert current sizeAspect to check against custom field options
-                const optionRatios = arField.options.map((opt) => {
-                    const match = opt.match(/_(\.?\d+)_(\d+)$/);
-                    return match ? `${match[1]}:${match[2]}` : opt;
-                });
-                if (!optionRatios.includes(sizeAspect)) {
-                    const firstOpt = arField.options[0] ?? "";
-                    const defOpt = arField.default ? String(arField.default) : firstOpt;
-                    const mDef = defOpt.match(/_(\.?\d+)_(\d+)$/);
-                    setSizeAspect(mDef ? `${mDef[1]}:${mDef[2]}` : defOpt);
-                }
-            } else {
-                setSizeAspect("");
-            }
             const resField = m?.custom_fields?.find((f) => f.id === "resolution" && f.type === "select");
             if (resField?.options) {
                 if (!resField.options.includes(sizeResolution)) {
@@ -404,7 +485,28 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                 setSizeResolution("");
             }
         }
-    }, [imageModelId, firstImageId, sizeAspect, sizeResolution]);
+    }, [imageModelId, firstImageId, sizeResolution]);
+
+    const activeImageModelIds = Object.values(IMAGE_CAPABILITIES).filter(hasActiveModelApi).map((candidate) => candidate.id).join("|");
+    const activeVideoModelIds = Object.values(VIDEO_CAPABILITIES).filter(hasActiveModelApi).map((candidate) => candidate.id).join("|");
+
+    useEffect(() => {
+        const firstActive = Object.values(IMAGE_CAPABILITIES).find(hasActiveModelApi);
+        if (firstActive && !hasActiveModelApi(IMAGE_CAPABILITIES[imageModelId])) handleImageModelChange(firstActive.id);
+    }, [activeImageModelIds, handleImageModelChange, imageModelId]);
+
+    useEffect(() => {
+        const firstActive = Object.values(VIDEO_CAPABILITIES).find(hasActiveModelApi);
+        if (firstActive && !hasActiveModelApi(VIDEO_CAPABILITIES[videoModelId])) handleVideoModelChange(firstActive.id, "");
+    }, [activeVideoModelIds, handleVideoModelChange, videoModelId]);
+
+    useEffect(() => {
+        if (mode !== "carousel") return;
+        const current = IMAGE_CAPABILITIES[imageModelId];
+        if (current && !current.media_slots.some(slot => slot.required) && getImageAspectRatios(current).length) return;
+        const fallback = Object.values(IMAGE_CAPABILITIES).find(model => hasActiveModelApi(model) && !model.media_slots.some(slot => slot.required) && getImageAspectRatios(model).length);
+        if (fallback) handleImageModelChange(fallback.id);
+    }, [mode, imageModelId, handleImageModelChange]);
 
     // Count extra controls for image mode
     const imageControlCount = (imageModel.custom_fields ?? []).filter(
@@ -427,15 +529,9 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
     } : null;
 
     // Unified aspect ratios
-    const imageRatios: [string, string][] = imageModel.size_ui
-        ? imageModel.size_ui.aspect_ratios.map((ar) => [`${ar.w}:${ar.h}`, `${ar.w}:${ar.h}`] as [string, string])
-        : (() => {
-            const arField = imageModel.custom_fields?.find((f) => f.id === "aspect_ratio" && f.type === "select");
-            return arField?.options?.map((opt) => {
-                const m = opt.match(/_(\.?\d+)_(\d+)$/);
-                return [m ? `${m[1]}:${m[2]}` : opt, m ? `${m[1]}:${m[2]}` : opt.replace(/_/g, " ")] as [string, string];
-            }) ?? [];
-        })();
+    const imageRatios = getImageAspectRatios(imageModel);
+    const sizeAspect = selectedImageFormats[0] ?? "";
+    const selectedExtraFormatCount = Math.max(0, selectedImageFormats.length - 1);
 
     // Unified resolutions
     const imageResolutions: SizeUiResolution[] = imageModel.size_ui
@@ -445,43 +541,259 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
             return resField?.options?.map((opt) => ({ id: opt, base: 0 })) ?? [];
         })();
 
+    const runCarousel = async (project: SocialProject) => {
+        if (!project.slides?.length) throw new Error("El carrusel no tiene páginas.");
+        const model = IMAGE_CAPABILITIES[project.modelId];
+        if (!model) throw new Error("El modelo del carrusel ya no está disponible.");
+        const referenceSlot = model.media_slots.find(slot => slot.kind === "image" && !slot.required)
+            ?? getEditVariant(model)?.slots.find(slot => slot.kind === "image");
+        const tasksResponse = await fetch("/api/image-tasks", { cache: "no-store" });
+        if (!tasksResponse.ok) throw new Error("No se pudo revisar el estado de las páginas.");
+        const existingTasks = await tasksResponse.json() as Array<{ task_id: string; status?: string }>;
+        const taskById = new Map(existingTasks.map(task => [task.task_id, task]));
+        const cover = project.slides[0];
+        let coverTaskId = cover.taskIds.at(-1);
+        let submitted = 0;
+
+        const submitSlide = async (slide: typeof cover, index: number, reference?: Blob) => {
+            setPendingGeneration(current => current ? { ...current, progress: `Enviando página ${index + 1} de ${project.slides!.length}…` } : current);
+            const form = new FormData();
+            form.append("prompt", project.brief);
+            form.append("model_id", project.modelId);
+            form.append("size_aspect", project.aspectRatio ?? "");
+            form.append("size_resolution", project.resolution ?? "");
+            form.append("social_project_id", project.id);
+            form.append("social_slide_id", slide.id);
+            const values = project.modelId === imageModelId ? { ...imageFieldValues } : {};
+            if (model.custom_fields?.some(field => field.id === "n")) values.n = 1;
+            form.append("field_values", JSON.stringify(values));
+            if (reference && referenceSlot) {
+                form.append(`slot_${referenceSlot.id}`, reference, "carousel-cover.png");
+            } else if (index === 0 && project.modelId === imageModelId) {
+                for (const [slotId, files] of Object.entries(slotFiles)) files.forEach(file => form.append(`slot_${slotId}`, file));
+            }
+            const response = await fetch("/api/generate-image", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: form });
+            const result = await response.json().catch(() => ({})) as { task_id?: string; error?: string };
+            if (!response.ok || !result.task_id) throw new Error(`Página ${index + 1}: ${result.error || "no se pudo generar"}`);
+            submitted += 1;
+            await revalidateImageTasks();
+            window.dispatchEvent(new Event("open-higgsfield:carousel-updated"));
+            return result.task_id;
+        };
+
+        try {
+            if (!coverTaskId || ["FAILED", "ERROR", "CANCELLED"].includes(taskById.get(coverTaskId)?.status ?? "")) {
+                const source = cover.sourceTaskId && referenceSlot ? await waitForImageResult(cover.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current)) : undefined;
+                coverTaskId = await submitSlide(cover, 0, source);
+            }
+            const remaining = project.slides.slice(1).filter(slide => {
+                const last = slide.taskIds.at(-1);
+                return !last || ["FAILED", "ERROR", "CANCELLED"].includes(taskById.get(last)?.status ?? "");
+            });
+            let coverReference: Blob | undefined;
+            if (remaining.length > 0 && referenceSlot && coverTaskId && remaining.some(slide => !slide.sourceTaskId)) {
+                coverReference = await waitForImageResult(coverTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current));
+            }
+            for (const slide of remaining) {
+                const reference = slide.sourceTaskId && referenceSlot
+                    ? await waitForImageResult(slide.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                    : coverReference;
+                await submitSlide(slide, project.slides.findIndex(item => item.id === slide.id), reference);
+            }
+        } catch (cause) {
+            const detail = cause instanceof Error ? cause.message : "No se pudo continuar.";
+            throw new Error(`${submitted} página(s) nuevas enviadas. ${detail} Usa «Continuar pendientes» para reanudar sin duplicar las ya enviadas.`);
+        }
+    };
+
+    useEffect(() => {
+        const resume = async (event: Event) => {
+            if (submissionInFlight.current) return;
+            const projectId = (event as CustomEvent<{ projectId: string }>).detail?.projectId;
+            if (!projectId) return;
+            submissionInFlight.current = true;
+            setApiError(null);
+            setPendingGeneration({ model: "Carrusel", startedAt: Date.now(), progress: "Revisando páginas pendientes…" });
+            try {
+                const response = await fetch("/api/social", { cache: "no-store" });
+                if (!response.ok) throw new Error("No se pudo cargar el carrusel.");
+                const data = await response.json() as { projects?: SocialProject[] };
+                const project = data.projects?.find(item => item.id === projectId && item.format === "carousel");
+                if (!project) throw new Error("No se encontró el carrusel.");
+                await runCarousel(project);
+            } catch (cause) {
+                setApiErrorDetail(cause instanceof Error ? cause.message : "No se pudo continuar.");
+                setApiError("ERR_GENERIC");
+            } finally {
+                submissionInFlight.current = false;
+                setPendingGeneration(null);
+                window.dispatchEvent(new Event("open-higgsfield:carousel-updated"));
+            }
+        };
+        window.addEventListener("open-higgsfield:carousel-resume", resume);
+        return () => window.removeEventListener("open-higgsfield:carousel-resume", resume);
+    });
+
     const onSubmit = async (data: FormData) => {
         if (submissionInFlight.current) return;
+        if (!hasSelectedActiveApi) {
+            setApiErrorDetail(`Conecta y activa una API compatible antes de generar ${mode === "video" ? "vídeo" : "imágenes"}.`);
+            setApiError("ERR_GENERIC");
+            return;
+        }
+        if (mode !== "video" && !sizeAspect) {
+            setApiErrorDetail(null);
+            setApiError("ERR_IMAGE_ASPECT_RATIO_REQUIRED");
+            return;
+        }
         submissionInFlight.current = true;
         setApiError(null);
+        setApiErrorDetail(null);
         setElapsedSeconds(0);
-        setPendingGeneration({ model: mode === "video" ? videoModel.label : imageModel.label, startedAt: Date.now() });
+        setPendingGeneration({ model: mode === "video" ? videoModel.label : imageModel.label, startedAt: Date.now(), progress: "Preparando solicitud…" });
+        let submittedImages = 0;
         try {
-            const body = new FormData();
-            body.append("prompt", data.prompt);
-            if (mode === "video") {
+            const selectedBrand = brands.find((brand) => brand.id === selectedBrandId);
+            const selectedCharacter = characters.find((character) => character.id === selectedCharacterId);
+            if (selectedCharacter && mode !== "video" && !imageUploadSlots.some(slot => slot.kind === "image") && !(imageModel.provider === "higgsfield" && imageModel.provider_model_id === "higgsfield-ai/soul/v2/standard" && selectedCharacter.soulStatus === "completed" && selectedCharacter.soulConnectionId === imageModel.provider_connection_id)) {
+                throw new Error("El modelo elegido no admite las referencias del personaje. Selecciona otro modelo de imagen.");
+            }
+            if (mode === "video" && selectedCharacter && selectedBrand && brandLogoAssetIds(selectedBrand).length > 0) {
+                throw new Error("Este modelo de video no puede recibir a la vez todas las fotos del personaje y los logos de marca. Genera primero una imagen con ambos y úsala como fotograma inicial.");
+            }
+            const brandPrompt = selectedBrand ? [
+                `Identidad visual de marca: ${selectedBrand.name}.`,
+                `Colores: principal ${selectedBrand.primaryColor}; secundario ${selectedBrand.secondaryColor}; acento ${selectedBrand.accentColor}.`,
+                `Tipografías: títulos ${selectedBrand.headingFont}; cuerpo ${selectedBrand.bodyFont}.`,
+                selectedBrand.voice ? `Tono: ${selectedBrand.voice}.` : "",
+                selectedBrand.visualRules ? `Reglas visuales: ${selectedBrand.visualRules}.` : "",
+                "Respeta esta identidad de forma coherente. Conserva el idioma y el texto solicitado en el prompt.",
+            ].filter(Boolean).join("\n") : "";
+            const finalPrompt = [data.prompt, brandPrompt].filter(Boolean).join("\n\n");
+            const promptMax = mode === "video" ? (videoModel.prompt_max ?? 2500) : (imageModel.prompt_max ?? 10000);
+            if ((mode === "video" ? finalPrompt : data.prompt).length > promptMax) {
+                setApiError("ERR_PROMPT_TOO_LONG");
+                return;
+            }
+            if (mode !== "video" && selectedBrand && brandLogoAssetIds(selectedBrand).length > 0 && !imageUploadSlots.some(slot => slot.kind === "image")) {
+                throw new Error("El modelo elegido no admite imágenes de referencia. Elige uno que admita los logos del sistema de diseño.");
+            }
+            if (mode === "carousel") {
+                const brief = data.prompt.trim();
+                if (brief.length < 5) throw new Error("Describe la idea del carrusel con al menos cinco caracteres.");
+                if (!selectedBrand) throw new Error("Selecciona un sistema de diseño para mantener la identidad de todas las páginas.");
+                if (imageModel.media_slots.some(slot => slot.required)) throw new Error("Este modelo necesita una imagen inicial obligatoria. Elige otro modelo de imagen para el carrusel.");
+                const response = await fetch("/api/social/carousels", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "create", name: brief.split(/[.!?\n]/)[0].slice(0, 100) || "Nuevo carrusel", brief, brandId: selectedBrand.id, companyId: companySelection.selectedId || undefined, characterId: selectedCharacter?.id, modelId: imageModelId, aspectRatio: sizeAspect, resolution: sizeResolution, slideCount: carouselSlideCount, language: locale.startsWith("pt") ? "Português (Brasil)" : locale.startsWith("en") ? "English" : "Español", autoStory: true }),
+                });
+                const result = await response.json().catch(() => ({})) as { project?: SocialProject; error?: string };
+                if (!response.ok || !result.project) throw new Error(result.error || "No se pudo crear el carrusel.");
+                const url = new URL(window.location.href); url.searchParams.set("carousel", result.project.id); window.history.replaceState(null, "", url);
+                window.dispatchEvent(new Event("open-higgsfield:carousel-updated"));
+                setValue("prompt", "");
+                await runCarousel(result.project);
+            } else if (mode === "video") {
+                const body = new FormData();
+                body.append("prompt", finalPrompt);
                 body.append("model_id", videoModelId);
+                if (companySelection.selectedId) body.append("company_id", companySelection.selectedId);
                 body.append("variant_id", videoVariantId);
                 body.append("settings", JSON.stringify(videoSettings));
+                if (selectedCharacter) body.append("character_id", selectedCharacter.id);
                 for (const att of attachments) {
                     if (att.file) body.append(`file_${att.roleId}`, att.file);
                     else if (att.url) body.append(`url_${att.roleId}`, att.url);
                 }
+                if (selectedBrand?.logoAssetId && !selectedCharacter) {
+                    const logoRole = videoRoleDescriptors.find((role) => role.kind === "image" && !attachments.some((item) => item.roleId === role.id));
+                    if (logoRole) {
+                        const logoResponse = await fetch(`/api/workflows/assets/${selectedBrand.logoAssetId}`, { cache: "no-store" });
+                        if (!logoResponse.ok) throw new Error("No se pudo cargar el logo del sistema de diseño.");
+                        body.append(`file_${logoRole.id}`, await logoResponse.blob(), "brand-logo.png");
+                    }
+                }
+                const res = await fetch("/api/generate", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body });
+                if (!res.ok) {
+                    const json = await res.json().catch(() => ({}));
+                    setApiError(json.error ?? "ERR_GENERIC");
+                }
+                await revalidateVideoTasks();
             } else {
-                body.append("model_id", imageModelId);
-                body.append("size_aspect", sizeAspect);
-                body.append("size_resolution", sizeResolution);
-                body.append("field_values", JSON.stringify(imageFieldValues));
-                for (const [slotId, files] of Object.entries(slotFiles)) {
-                    files.forEach((f) => body.append(`slot_${slotId}`, f));
+                const variants = selectedImageFormats.slice(1)
+                    .map((ratio) => [ratio, imageRatios.find(([value]) => value === ratio)?.[1] ?? ratio] as const);
+                const hasVariants = variants.length > 0;
+                const referenceSlot = imageUploadSlots.find(slot => slot.kind === "image");
+                if (hasVariants && !referenceSlot) {
+                    setApiErrorDetail("Para adaptar un mismo post a varios formatos, selecciona un modelo que admita imágenes de referencia.");
+                    setApiError("ERR_GENERIC");
+                    return;
+                }
+
+                const ratioField = imageModel.custom_fields?.find(field => field.id === "aspect_ratio" && field.type === "select");
+                const baseFieldValues = { ...imageFieldValues };
+                if (hasVariants && imageModel.custom_fields?.some(field => field.id === "n")) baseFieldValues.n = 1;
+                const makeVariantPrompt = (label: string) => [
+                    data.prompt,
+                    `ADAPTACIÓN DEL MISMO POST A ${label}. La imagen adjunta es la pieza original y debe ser tu referencia visual principal. Conserva exactamente el mismo tema, mensaje, elementos, producto/personas, identidad de marca, estilo y texto visible; no inventes una publicación distinta ni cambies las palabras. Recompón el diseño para el nuevo lienzo: expande o reconstruye el fondo, recoloca y escala los elementos, preserva márgenes seguros y evita cortar el logo, los sujetos o cualquier texto. No estires la imagen original.`,
+                ].join("\n\n");
+
+                if (hasVariants && variants.some(([, label]) => makeVariantPrompt(label).length > promptMax)) {
+                    setApiError("ERR_PROMPT_TOO_LONG");
+                    return;
+                }
+
+                const submitImage = async (ratio: string, promptText: string, reference?: Blob) => {
+                    const body = new FormData();
+                    const fieldValues = { ...baseFieldValues };
+                    if (ratioField?.options?.includes(ratio)) fieldValues[ratioField.id] = ratio;
+                    body.append("prompt", promptText);
+                    body.append("model_id", imageModelId);
+                    if (companySelection.selectedId) body.append("company_id", companySelection.selectedId);
+                    if (selectedBrand) body.append("brand_id", selectedBrand.id);
+                    if (selectedCharacter) body.append("character_id", selectedCharacter.id);
+                    body.append("size_aspect", ratio);
+                    body.append("size_resolution", sizeResolution);
+                    body.append("field_values", JSON.stringify(fieldValues));
+                    for (const [slotId, files] of Object.entries(slotFiles)) {
+                        if (reference && slotId === referenceSlot?.id) continue;
+                        files.forEach(file => body.append(`slot_${slotId}`, file));
+                    }
+                    if (reference && referenceSlot) {
+                        body.append(`slot_${referenceSlot.id}`, reference, "original-post-reference.png");
+                    }
+                    const response = await fetch("/api/generate-image", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body });
+                    const result = await response.json().catch(() => ({})) as { task_id?: string; error?: string };
+                    if (!response.ok || !result.task_id) throw new Error(result.error ?? "No se pudo enviar la generación.");
+                    submittedImages += 1;
+                    await revalidateImageTasks();
+                    return result.task_id;
+                };
+
+                setPendingGeneration(current => current ? { ...current, progress: hasVariants ? `Generando imagen principal para ${variants.length + 1} formatos…` : "Generando imagen…" } : current);
+                const baseTaskId = await submitImage(sizeAspect, data.prompt);
+                if (hasVariants && referenceSlot) {
+                    const reference = await waitForImageResult(baseTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current));
+                    for (const [index, [ratio, label]] of variants.entries()) {
+                        setPendingGeneration(current => current ? { ...current, progress: `Adaptando formato ${label} (${index + 1}/${variants.length})…` } : current);
+                        await submitImage(ratio, makeVariantPrompt(label), reference);
+                    }
                 }
             }
-            const res = await fetch(mode === "video" ? "/api/generate" : "/api/generate-image", {
-                method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body,
-            });
-            if (!res.ok) {
-                const json = await res.json().catch(() => ({}));
-                setApiError(json.error ?? "ERR_GENERIC");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            if (mode === "image" && submittedImages > 0 && submittedImages < selectedImageFormats.length) {
+                const translated = /^ERR_[A-Z0-9_]+$/.test(message) && tErrors.has(message as never)
+                    ? tErrors(message as never) : message;
+                setApiErrorDetail(`Se enviaron ${submittedImages} de ${selectedImageFormats.length} formatos. Faltan ${selectedImageFormats.length - submittedImages}. ${translated || "Revisa el historial antes de volver a generar."}`);
+                setApiError("ERR_GENERIC");
+            } else if (/^ERR_[A-Z0-9_]+$/.test(message)) {
+                setApiErrorDetail(null);
+                setApiError(message);
+            } else {
+                setApiErrorDetail(message || null);
+                setApiError("ERR_GENERATION_CONNECTION_INTERRUPTED");
             }
-            // Keep the indicator until the returned task is visible in the gallery.
-            await (mode === "video" ? revalidateVideoTasks() : revalidateImageTasks());
-        } catch {
-            setApiError("ERR_GENERATION_CONNECTION_INTERRUPTED");
         } finally {
             submissionInFlight.current = false;
             setPendingGeneration(null);
@@ -506,11 +818,11 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 10 }}
                         className="pointer-events-auto fixed right-6 z-42 min-w-[240px] max-w-[360px] rounded-[18px] border border-white/[.08] text-[13px] leading-[1.5] mb-2"
-                        style={{ bottom: 170, padding: "14px 16px", background: "rgba(12,16,24,.96)", boxShadow: "0 28px 80px rgba(0,0,0,.42)" }}
+                        style={{ bottom: 170, padding: "14px 16px", background: "rgba(12,12,12,.96)", boxShadow: "0 28px 80px rgba(0,0,0,.42)" }}
                     >
                         <div className="flex items-center gap-2 text-[#ffc4c4]" style={{ borderColor: "rgba(255,128,128,.22)" }}>
                             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                            <span className="flex-1">{tErrors.has(apiError as never) ? tErrors(apiError as never) : tErrors("ERR_GENERIC")}</span>
+                            <span className="flex-1">{apiErrorDetail ?? (tErrors.has(apiError as never) ? tErrors(apiError as never) : tErrors("ERR_GENERIC"))}</span>
                             <button onClick={() => setApiError(null)} className="font-bold hover:opacity-70">×</button>
                         </div>
                     </motion.div>
@@ -518,13 +830,13 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
             </AnimatePresence>
 
             {pendingGeneration && (
-                <div className="mx-auto mb-3 flex items-center gap-3 rounded-2xl border border-[#d5ff47]/25 bg-[#11150c] px-4 py-3 text-white shadow-xl" style={{ width: "min(70rem, 100%)" }}>
-                    <Loader2 aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin text-[#d5ff47]" />
+                <div className="mx-auto mb-3 flex items-center gap-3 rounded-2xl border border-[#ff4d4d]/25 bg-[#111111] px-4 py-3 text-white shadow-xl" style={{ width: "min(70rem, 100%)" }}>
+                    <Loader2 aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin text-[#ff4d4d]" />
                     <div className="min-w-0 flex-1" role="status" aria-live="polite">
                         <p className="text-sm font-semibold">{tCommand("generationPending", { model: pendingGeneration.model })}</p>
-                        <p className="mt-1 text-xs text-white/65">{tCommand("generationWait")}</p>
+                        <p className="mt-1 text-xs text-white/65">{pendingGeneration.progress || tCommand("generationWait")}</p>
                     </div>
-                    <span className="shrink-0 text-xs tabular-nums text-[#d5ff47]" aria-label={tCommand("generationElapsed", { seconds: elapsedSeconds })}>{elapsedSeconds}s</span>
+                    <span className="shrink-0 text-xs tabular-nums text-[#ff4d4d]" aria-label={tCommand("generationElapsed", { seconds: elapsedSeconds })}>{elapsedSeconds}s</span>
                 </div>
             )}
 
@@ -532,55 +844,15 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
             <form
                 aria-busy={isGenerating}
                 onSubmit={handleSubmit(onSubmit)}
-                className="pointer-events-auto mx-auto grid grid-cols-1 gap-3 items-stretch sm:grid-cols-[64px_minmax(0,1fr)]"
+                className="pointer-events-auto mx-auto"
                 style={{ width: "min(70rem, 100%)" }}
             >
-                {/* Mode rail */}
-                <div
-                    className="rounded-[20px] p-1.5 border border-white/[.08] flex flex-row gap-1.5 sm:flex-col"
-                    style={{
-                        background: "rgba(12,12,12,.88)",
-                        boxShadow: "0 28px 80px rgba(0,0,0,.42)",
-                        backdropFilter: "blur(18px)",
-                    }}
-                >
-                    {(["image", "video"] as const).map((m) => (
-                        <button
-                            key={m}
-                            type="button"
-                            disabled={isGenerating}
-                            onClick={() => onModeChange(m)}
-                            className={`flex-1 min-h-0 p-1.5 flex flex-col items-center justify-center gap-[5px] rounded-[14px] text-[10px] font-extrabold tracking-[0.02em] cursor-pointer border transition-colors ${mode === m
-                                ? "text-foreground border-white/[.1]"
-                                : "text-muted-foreground border-transparent hover:text-foreground"
-                                }`}
-                            style={mode === m ? {
-                                background: "linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.04)), rgba(255,255,255,.03)"
-                            } : { background: "transparent" }}
-                        >
-                            {m === "image" ? (
-                                <svg viewBox="0 0 24 24" fill="none" className="w-[18px] h-[18px] shrink-0">
-                                    <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z" stroke="currentColor" strokeWidth="1.6" />
-                                    <path d="M7.5 15.5l2.8-3.1a1 1 0 0 1 1.48-.05l2.12 2.12a1 1 0 0 0 1.47-.05l2.13-2.52" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                                    <circle cx="9" cy="9" r="1.2" fill="currentColor" />
-                                </svg>
-                            ) : (
-                                <svg viewBox="0 0 24 24" fill="none" className="w-[18px] h-[18px] shrink-0">
-                                    <rect x="4" y="5" width="11" height="14" rx="2.4" stroke="currentColor" strokeWidth="1.6" />
-                                    <path d="M15 10.1l4.5-2.5A1 1 0 0 1 21 8.48v7.04a1 1 0 0 1-1.5.87L15 13.9z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-                                </svg>
-                            )}
-                            <span>{m === "image" ? tCommon("image") : tCommon("video")}</span>
-                        </button>
-                    ))}
-                </div>
-
                 {/* Composer card */}
                 <div
                     className="rounded-[28px] border border-white/[.08] flex flex-col items-stretch gap-3 sm:flex-row"
                     style={{
                         backdropFilter: "blur(26px)",
-                        background: "radial-gradient(circle at 92% 82%, rgba(213,255,71,.07), transparent 18%), linear-gradient(90deg, rgba(12,12,12,.96), rgba(20,20,20,.92) 52%, rgba(24,24,24,.88))",
+                        background: "radial-gradient(circle at 92% 82%, rgba(255,77,77,.07), transparent 18%), linear-gradient(90deg, rgba(12,12,12,.96), rgba(20,20,20,.92) 52%, rgba(24,24,24,.88))",
                         boxShadow: "0 28px 80px rgba(0,0,0,.42)",
                         padding: "12px",
                     }}
@@ -596,7 +868,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                     attachments={attachments}
                                     onAttachmentsChange={setAttachments}
                                 />
-                            ) : mode === "image" && imageUploadSlots.length > 0 ? (
+                            ) : mode !== "video" && imageUploadSlots.length > 0 ? (
                                 <ImageAttachmentButton
                                     slots={imageUploadSlots}
                                     slotFiles={slotFiles}
@@ -613,7 +885,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                             ) : null}
 
                             {/* Image slot thumbnails */}
-                            {mode === "image" && Object.values(slotFiles).some((f) => f.length > 0) && (
+                            {mode !== "video" && Object.values(slotFiles).some((f) => f.length > 0) && (
                                 <div className="flex items-center gap-[5px] flex-wrap shrink-0">
                                     {Object.entries(slotFiles).flatMap(([slotId, files]) =>
                                         files.map((file, idx) => (
@@ -668,7 +940,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                 {isDragOverlayVisible && hasDropTargets ? (
                                     <div
                                         className="rounded-[14px] border border-dashed p-2.5"
-                                        style={{ borderColor: "rgba(213,255,71,.44)", background: "rgba(213,255,71,.06)" }}
+                                        style={{ borderColor: "rgba(255,77,77,.44)", background: "rgba(255,77,77,.06)" }}
                                         onDragOver={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
@@ -683,7 +955,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                     >
                                         {dropTargets.length === 1 ? (
                                             <div className="px-2 py-3 text-center">
-                                                <p className="text-[11px] font-bold uppercase tracking-[.08em]" style={{ color: "rgba(213,255,71,.92)" }}>
+                                                <p className="text-[11px] font-bold uppercase tracking-[.08em]" style={{ color: "rgba(255,77,77,.92)" }}>
                                                     {tCommand("dropSingleTitle", { field: dropTargets[0].label })}
                                                 </p>
                                                 <p className="mt-1 text-[12px]" style={{ color: "rgba(244,247,251,.72)" }}>
@@ -697,8 +969,8 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                                         key={target.id}
                                                         className="rounded-[10px] border px-2.5 py-2 transition-colors"
                                                         style={{
-                                                            borderColor: activeDropTargetId === target.id ? "rgba(213,255,71,.64)" : "rgba(255,255,255,.16)",
-                                                            background: activeDropTargetId === target.id ? "rgba(213,255,71,.14)" : "rgba(255,255,255,.04)",
+                                                            borderColor: activeDropTargetId === target.id ? "rgba(255,77,77,.64)" : "rgba(255,255,255,.16)",
+                                                            background: activeDropTargetId === target.id ? "rgba(255,77,77,.14)" : "rgba(255,255,255,.04)",
                                                         }}
                                                         onDragEnter={(e) => {
                                                             e.preventDefault();
@@ -735,7 +1007,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                         value={prompt}
                                         onChange={(e) => { setValue("prompt", e.target.value); autoResize(); }}
                                         onKeyDown={handleKeyDown}
-                                        placeholder={mode === "video" ? t("video.promptPlaceholder") : t("image.promptPlaceholder")}
+                                        placeholder={mode === "carousel" ? "Describe tu carrusel: tema, público, mensaje y llamada a la acción…" : mode === "video" ? t("video.promptPlaceholder") : t("image.promptPlaceholder")}
                                         className="w-full border-none bg-transparent resize-none outline-none text-[15px] font-normal min-h-8 py-1.5 box-border text-foreground leading-[1.3]"
                                         style={{
                                             maxHeight: "35dvh",
@@ -749,6 +1021,10 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
 
                         {/* Control row (pills) */}
                         <div className="flex flex-wrap items-center gap-2 mt-[2px]">
+                            <StudioModePill mode={mode} onModeChange={onModeChange} disabled={isGenerating} />
+                            <DesignSystemPill brands={brands} selectedId={selectedBrandId} loading={brandsLoading} onSelect={selectBrand} />
+                            <CharacterPill characters={characters} selectedId={selectedCharacterId} onSelect={setSelectedCharacterId} />
+                            <CompanySelect companies={companySelection.companies} selectedId={companySelection.selectedId} onSelect={companySelection.select} />
                             {mode === "video" ? (
                                 <>
                                     <VideoModelPill
@@ -791,13 +1067,16 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                         modelId={imageModelId}
                                         onModelChange={handleImageModelChange}
                                         slotFiles={slotFiles}
+                                        carouselMode={mode === "carousel"}
                                     />
                                     {imageRatios.length > 0 && (
                                         <AspectRatioPill
                                             ratios={imageRatios}
-                                            value={sizeAspect}
-                                            onChange={setSizeAspect}
-                                            customFields={imageCustomFields}
+                                            allowAuto={false}
+                                            selectedValues={mode === "carousel" ? selectedImageFormats.slice(0, 1) : selectedImageFormats}
+                                            onSelectedValuesChange={setSelectedImageFormats}
+                                            multiSelect={mode === "image" && imageUploadSlots.some((slot) => slot.kind === "image")}
+                                            customFields={mode === "image" ? imageCustomFields : null}
                                             fieldValues={imageFieldValues}
                                             onFieldChange={(id, val) => setImageFieldValues((prev) => ({ ...prev, [id]: val }))}
                                         />
@@ -809,7 +1088,8 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                             onChange={setSizeResolution}
                                         />
                                     )}
-                                    {imageModel.custom_fields?.some((f) => f.type === "checkbox" && f.id.includes("prompt")) && (
+                                    {mode === "carousel" && <PillPopover open={carouselCountOpen} onOpenChange={setCarouselCountOpen} width="w-56" trigger={<><Layers3 className="h-4 w-4" /><span>{carouselSlideCount} imágenes</span></>}><p className="mb-2 text-[10px] font-extrabold uppercase tracking-[.08em] text-white/45">Páginas del carrusel</p><div className="grid grid-cols-5 gap-1.5">{Array.from({ length: 9 }, (_, index) => index + 2).map(count => <button key={count} type="button" aria-pressed={carouselSlideCount === count} onClick={() => { setCarouselSlideCount(count); setCarouselCountOpen(false); }} className={`rounded-lg px-2 py-2 text-xs font-bold ${carouselSlideCount === count ? "bg-[#c62828] text-white" : "bg-white/5 text-white hover:bg-white/10"}`}>{count}</button>)}</div><p className="mt-3 text-[11px] leading-relaxed text-white/45">Una imagen por página, con una sola historia y estilo visual.</p></PillPopover>}
+                                    {mode === "image" && imageModel.custom_fields?.some((f) => f.type === "checkbox" && f.id.includes("prompt")) && (
                                         <TogglePill
                                             label={t("image.enhancePrompt")}
                                             icon="sparkle"
@@ -820,7 +1100,7 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                             }}
                                         />
                                     )}
-                                    {imageControlCount > 0 && (
+                                    {mode === "image" && imageControlCount > 0 && (
                                         <ControlsPill
                                             model={imageModel}
                                             fieldValues={imageFieldValues}
@@ -831,29 +1111,30 @@ export function CommandBar({ mode, onModeChange }: CommandBarProps) {
                                 </>
                             )}
                         </div>
-                        {mode === "image" && <GenerationPrice key={imageModelId} model={imageModel} resolution={sizeResolution || String(imageFieldValues.resolution || "")} aspectRatio={sizeAspect || String(imageFieldValues.aspect_ratio || "")} quality={String(imageFieldValues.quality || "")} count={Number(imageFieldValues.n ?? 1)} />}
+                        {mode !== "video" && <GenerationPrice key={imageModelId} model={imageModel} resolution={sizeResolution || String(imageFieldValues.resolution || "")} aspectRatio={sizeAspect || String(imageFieldValues.aspect_ratio || "")} quality={String(imageFieldValues.quality || "")} count={mode === "carousel" ? carouselSlideCount : selectedExtraFormatCount ? 1 + selectedExtraFormatCount : Number(imageFieldValues.n ?? 1)} />}
                     </div>{/* end content wrapper */}
 
-                    {/* Generate button — flex end, large lime */}
+                    {/* Generate button — flex end, large red */}
                     <button
                         type="submit"
-                        disabled={isGenerating}
+                        disabled={isGenerating || !hasSelectedActiveApi}
+                        title={hasSelectedActiveApi ? undefined : "Conecta una API para elegir un modelo"}
                         className="w-full min-h-14 shrink-0 self-center border-none rounded-[22px] font-bold cursor-pointer active:scale-95 transition-transform disabled:cursor-wait disabled:opacity-75 disabled:active:scale-100 sm:w-[146px] sm:min-h-[84px]"
                         style={{
-                            background: "linear-gradient(180deg, #d5ff47, #bcf122)",
-                            color: "#0b1118",
+                            background: "linear-gradient(180deg, #d32f2f, #b71c1c)",
+                            color: "#ffffff",
                             fontFamily: "'Space Grotesk', system-ui, sans-serif",
                             fontSize: 18,
                             letterSpacing: "-0.04em",
-                            boxShadow: "0 20px 42px rgba(188,241,34,.18)",
+                            boxShadow: "0 20px 42px rgba(229,56,56,.18)",
                         }}
                     >
                         <span className="flex items-center justify-center gap-2">
                             {isGenerating && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}
-                            {tCommon(isGenerating ? "generating" : "generate")}
+                            {isGenerating ? tCommon("generating") : mode === "carousel" ? `Generar ${carouselSlideCount} imágenes` : selectedExtraFormatCount > 0 && mode === "image" ? `Generar ${1 + selectedExtraFormatCount} formatos` : tCommon("generate")}
                         </span>
                         <small className="block mt-1 text-[10px] font-extrabold tracking-[.08em] uppercase" style={{ fontFamily: "'Manrope', sans-serif" }}>
-                            {mode === "video" ? tCommon("video") : tCommon("image")}
+                            {mode === "video" ? tCommon("video") : mode === "carousel" ? "CARRUSEL" : tCommon("image")}
                         </small>
                     </button>
                 </div>

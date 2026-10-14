@@ -6,6 +6,7 @@ import path from "node:path";
 import { openRouterFailure } from "../src/providers/openrouter-errors";
 import { publicErrorMessage } from "../src/lib/public-error";
 import type { ProviderGenerationRequest } from "../src/providers/types";
+import sharp from "sharp";
 
 test("OpenRouter errors expose only closed codes, never upstream secrets", () => {
     const cases: [number, string][] = [
@@ -49,6 +50,63 @@ test("OpenRouter adapter: request contract, responses, safe failures and no retr
         if (result.status === "COMPLETED") assert.equal(Buffer.from(result.assets[0].data!).toString(), "test-image");
         assert.equal(mock.mock.callCount(), 1);
     });
+    await t.test("reuses a private image as a reference for a second format without Cloudinary", async (t) => {
+        const { imageReferenceForProvider } = await import("../src/lib/image-reference");
+        const source = Buffer.from("test-reference-image");
+        const reference = await imageReferenceForProvider("openrouter", source);
+        assert.equal(reference, `data:image/jpeg;base64,${source.toString("base64")}`);
+        const mock = t.mock.method(globalThis, "fetch", async (url: URL, options: RequestInit) => {
+            assert.equal(url.href, "https://openrouter.ai/api/v1/images");
+            const payload = JSON.parse(options.body as string);
+            assert.equal(payload.aspect_ratio, "9:16");
+            assert.deepEqual(payload.input_references, [{ type: "image_url", image_url: { url: reference } }]);
+            return Response.json({ data: [{ b64_json: Buffer.from("second-format").toString("base64") }] });
+        });
+        const result = await provider.submit({
+            ...request,
+            params: { ...request.params, aspect_ratio: "9:16" },
+            media: { images: { input_references: reference } },
+        });
+        assert.equal(result.status, "COMPLETED");
+        assert.equal(mock.mock.callCount(), 1);
+    });
+    await t.test("image editing sends the original, painted guide and optional reference to OpenRouter", async (t) => {
+        const images = {
+            source: "data:image/png;base64,c291cmNl",
+            region_guide: "data:image/png;base64,Z3VpZGU=",
+            reference: "data:image/png;base64,cmVmZXJlbmNl",
+        };
+        const mock = t.mock.method(globalThis, "fetch", async (url: URL, options: RequestInit) => {
+            assert.equal(url.href, "https://openrouter.ai/api/v1/images");
+            const payload = JSON.parse(options.body as string);
+            assert.equal(payload.model, "openai/gpt-image-2.5-sunburst");
+            assert.equal(payload.aspect_ratio, "2:3");
+            assert.equal(payload.quality, "high");
+            assert.equal(payload.n, 1);
+            assert.equal(payload.mask, undefined);
+            assert.deepEqual(payload.input_references.map((item: { image_url: { url: string } }) => item.image_url.url), Object.values(images));
+            return Response.json({ data: [{ b64_json: Buffer.from("edited-image").toString("base64"), media_type: "image/png" }] });
+        });
+        const result = await provider.submit({ ...request, providerModelId: "openai/gpt-image-2.5-sunburst", params: { ...request.params, aspect_ratio: "2:3", field_values: { quality: "high", n: 1 } }, media: { images } });
+        assert.equal(result.status, "COMPLETED");
+        assert.equal(mock.mock.callCount(), 1);
+    });
+    await t.test("requests PNG transparency and rejects a visually opaque result", async (t) => {
+        const transparent = await sharp({ create: { width: 2, height: 2, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+        const opaque = await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer();
+        const mock = t.mock.method(globalThis, "fetch", async (_url: URL, options: RequestInit) => {
+            const payload = JSON.parse(options.body as string);
+            assert.equal(payload.background, "transparent");
+            assert.equal(payload.output_format, "png");
+            assert.equal(payload.input_references[0].image_url.url, "data:image/png;base64,cG5n");
+            return Response.json({ data: [{ b64_json: transparent.toString("base64"), media_type: "image/png" }] });
+        });
+        const editRequest = { ...request, media: { images: { input_references: "data:image/png;base64,cG5n" } }, params: { ...request.params, field_values: { background: "transparent", output_format: "png" } } };
+        const result = await provider.submit(editRequest);
+        assert.equal(result.status, "COMPLETED");
+        mock.mock.mockImplementation(async () => Response.json({ data: [{ b64_json: opaque.toString("base64"), media_type: "image/png" }] }));
+        await assert.rejects(provider.submit(editRequest), /ERR_OPENROUTER_IMAGE_NOT_TRANSPARENT/);
+    });
     for (const status of [400, 402, 429, 502]) await t.test(`HTTP ${status} gives a safe error without retries`, async (t) => {
         const mock = t.mock.method(globalThis, "fetch", async () => Response.json({ error: { code: status, message: "dummy-test-key secret prompt" } }, { status }));
         const logs: unknown[][] = [];
@@ -70,5 +128,23 @@ test("OpenRouter adapter: request contract, responses, safe failures and no retr
         await assert.rejects(provider.submit(request), /ERR_NO_IMAGE_GENERATED/);
         mock.mock.mockImplementation(async () => { throw new DOMException("private upstream detail", "TimeoutError"); });
         await assert.rejects(provider.submit(request), /ERR_OPENROUTER_TIMEOUT/);
+    });
+    await t.test("recovers completed video from job content without submitting again", async (t) => {
+        const mp4 = Buffer.alloc(32);
+        mp4.writeUInt32BE(24, 0);
+        mp4.write("ftypisom", 4);
+        mp4.write("mdat", 24);
+        const mock = t.mock.method(globalThis, "fetch", async (url: URL) => {
+            if (url.pathname.endsWith("/content")) return new Response(mp4, { headers: { "Content-Type": "application/octet-stream" } });
+            assert.equal(url.pathname, "/api/v1/videos/existing-job");
+            return Response.json({ id: "existing-job", status: "completed", unsigned_urls: ["https://expired.example/video.mp4"], usage: { cost: 0.12 } });
+        });
+        const result = await provider.poll({ mediaType: "video", providerModelId: "alibaba/wan-3.0", operation: { connectionId: connection.id, jobId: "existing-job" } });
+        assert.equal(result.status, "COMPLETED");
+        if (result.status === "COMPLETED") {
+            assert.deepEqual(Buffer.from(result.assets[0].data!), mp4);
+            assert.equal(result.assets[0].mimeType, "video/mp4");
+        }
+        assert.equal(mock.mock.callCount(), 2);
     });
 });

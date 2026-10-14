@@ -4,8 +4,10 @@ import { GoogleProvider } from "./google";
 import type { GenerationProvider, ProviderId } from "./types";
 import { VercelAiGatewayProvider } from "./vercel-ai-gateway";
 import { OpenRouterProvider } from "./openrouter";
+import { OpenAIProvider } from "./openai";
 import { HiggsfieldProvider } from "./higgsfield";
 import { ApiMarketProvider } from "./api-market";
+import { ApiMartProvider } from "./apimart";
 
 const providers = new Map<ProviderId, GenerationProvider>([
     ["freepik", new FreepikProvider()],
@@ -13,8 +15,10 @@ const providers = new Map<ProviderId, GenerationProvider>([
     ["google-vertex", new GoogleProvider("google-vertex")],
     ["vercel-ai-gateway", new VercelAiGatewayProvider()],
     ["openrouter", new OpenRouterProvider()],
+    ["openai", new OpenAIProvider()],
     ["higgsfield", new HiggsfieldProvider()],
     ["api-market", new ApiMarketProvider()],
+    ["apimart", new ApiMartProvider()],
 ]);
 
 export function resolveProvider(caps: ModelCapabilities): {

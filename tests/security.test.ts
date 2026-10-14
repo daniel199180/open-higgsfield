@@ -53,6 +53,36 @@ test("single-admin setup, encrypted connections and security boundaries", async 
         await store.upsertProviderConnection({ id, provider: "openrouter", name: "disabled", credentials: {}, enabled: false });
         await assert.rejects(store.getConnectionForProvider("openrouter", id), /ERR_CONNECTION_NOT_FOUND/);
     });
+    await t.test("one encrypted API.market account exposes multiple product models without leaking its key", async () => {
+        const apiKey = `market-test-${crypto.randomUUID()}`;
+        const products = [
+            { workspace: "magicapi", slug: "ideogram-v3-pro-text-to-image", mediaType: "image" },
+            { workspace: "byteplus", slug: "seedance-image-to-video-pro", mediaType: "video" },
+        ];
+        const { expandApiMarketConnections } = store;
+        const { subscribedApiMarketProducts, parseApiMarketProducts } = await import("../src/lib/api-market-products");
+        assert.deepEqual(subscribedApiMarketProducts({ usageData: [{ apiName: "magicapi/ideogram-v3-pro-text-to-image" }, { store: "byteplus", apiProduct: "seedance-image-to-video-pro" }] }), products);
+        assert.throws(() => parseApiMarketProducts(JSON.stringify([{ workspace: "..", slug: "bad", mediaType: "image" }])), /ERR_API_MARKET_PRODUCTS_INVALID/);
+        assert.throws(() => parseApiMarketProducts(JSON.stringify([products[0], products[0]])), /ERR_API_MARKET_PRODUCTS_INVALID/);
+        const config = { mode: "catalog" as const, products: JSON.stringify(products) };
+        assert.equal(connectionSchema.safeParse({ provider: "api-market", name: "Cuenta", config, credentials: { apiKey } }).success, true);
+        assert.doesNotThrow(() => validateConnectionConfig({ provider: "api-market", name: "Cuenta", config, credentials: { apiKey } }));
+        const account = await store.upsertProviderConnection({ provider: "api-market", name: "Cuenta", config, credentials: { apiKey }, isDefault: true });
+        assert.equal(JSON.stringify(account).includes(apiKey), false);
+        const stored = await store.getStoredConnection(account.id);
+        assert.equal(expandApiMarketConnections([stored!]).length, 2);
+        const first = await store.getConnectionForProvider("api-market", `${account.id}:magicapi:ideogram-v3-pro-text-to-image`);
+        const second = await store.getConnectionForProvider("api-market", `${account.id}:byteplus:seedance-image-to-video-pro`);
+        assert.equal(first?.credentials.apiKey, apiKey);
+        assert.equal(second?.config.mediaType, "video");
+        await assert.rejects(store.getConnectionForProvider("api-market", `${account.id}:magicapi:invented`), /ERR_CONNECTION_NOT_FOUND/);
+        assert.equal((await fs.readFile(path.join(directory, "provider-connections.enc.json"), "utf8")).includes(apiKey), false);
+        assert.equal((await store.listProviderConnections()).filter((item) => item.provider === "api-market").length, 1);
+        await store.upsertProviderConnection({ id: account.id, provider: "api-market", name: "Cuenta", config: { workspace: "magicapi", slug: "upscaler", mediaType: "image" }, credentials: {} });
+        assert.equal((await store.getStoredConnection(account.id))?.config.mode, undefined, "switching back to a single product removes catalog fields");
+        await store.upsertProviderConnection({ id: account.id, provider: "api-market", name: "Cuenta", config, credentials: {} });
+        assert.equal((await store.getStoredConnection(account.id))?.config.workspace, undefined, "switching to catalog removes obsolete single-product fields");
+    });
     await t.test("schema validation, official destinations and safe relative polling URLs", () => {
         assert.equal(connectionSchema.safeParse({ provider: "openrouter", name: "test", credentials: { apiKey: "abc\r\nInjected: yes" } }).success, false);
         assert.throws(() => validateConnectionConfig({ provider: "openrouter", name: "test", credentials: {}, config: { baseUrl: "https://evil.example" } }), /ERR_PROVIDER_URL_NOT_ALLOWED/);

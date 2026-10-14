@@ -37,8 +37,9 @@ export interface TaskEvent {
 
 export interface VideoTask {
     task_id: string;
+    company_id?: string;
     status?: string;
-    provider_id?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "higgsfield" | "api-market";
+    provider_id?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "openai" | "higgsfield" | "api-market" | "apimart";
     provider_model_id?: string;
     provider_connection_id?: string;
     provider_task_id?: string;
@@ -65,8 +66,9 @@ export interface VideoTask {
 
 export interface ImageTask {
     task_id: string;
+    company_id?: string;
     status?: string;
-    provider_id?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "higgsfield" | "api-market";
+    provider_id?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "openai" | "higgsfield" | "api-market" | "apimart";
     provider_model_id?: string;
     provider_connection_id?: string;
     provider_task_id?: string;
@@ -87,6 +89,27 @@ export interface ImageTask {
     error_message?: string;
     events?: TaskEvent[];
     _done?: boolean;
+}
+
+export interface ImageLayerMetadata {
+    index: number;
+    zIndex: number;
+    name: string;
+    description: string;
+    size: { width: number; height: number };
+    boundingBox: {
+        absolute: [number, number, number, number];
+        normalized: [number, number, number, number];
+    };
+}
+
+export interface ImageLayerSet {
+    version: 1;
+    model: string;
+    sourceWidth: number;
+    sourceHeight: number;
+    baseIndex: number;
+    layers: ImageLayerMetadata[];
 }
 
 export type AnyTask = VideoTask | ImageTask;

@@ -151,6 +151,8 @@
         "ERR_UNKNOWN_MODEL": "Modelo desconhecido",
         "ERR_PROMPT_REQUIRED": "O prompt é obrigatório para este modelo",
         "ERR_PROMPT_TOO_LONG": "O prompt excede o limite do modelo ({max} caracteres)",
+        "ERR_IMAGE_ASPECT_RATIO_REQUIRED": "Escolha um formato de imagem antes de gerar.",
+        "ERR_INVALID_IMAGE_ASPECT_RATIO": "Este formato de imagem não é compatível com o modelo selecionado.",
         "ERR_MISSING_ATTACHMENT": "Falta o anexo obrigatório: {label}",
         "ERR_ATTACHMENT_GROUP_MIN": "Forneça ao menos {min} anexo(s) para {label}",
         "ERR_ATTACHMENT_GROUP_MAX": "Forneça no máximo {max} anexo(s) para {label}",

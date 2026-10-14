@@ -5,6 +5,7 @@ import path from "node:path";
 import { STORAGE_ROOT } from "@/lib/storage-paths";
 import type { ProviderId } from "@/providers/types";
 import { atomicJson, vaultKey, withSecurityLock } from "./security-store";
+import { apiMarketProductConnectionId, parseApiMarketProducts } from "./api-market-products";
 
 export interface ProviderConnection {
     id: string;
@@ -119,6 +120,21 @@ export async function getStoredConnections(provider?: ProviderId): Promise<Provi
     return provider ? connections.filter((connection) => connection.provider === provider) : connections;
 }
 
+export function expandApiMarketConnections(connections: ProviderConnection[]): ProviderConnection[] {
+    return connections.flatMap((connection) => {
+        if (connection.provider !== "api-market" || connection.config.mode !== "catalog") return [connection];
+        let products;
+        try { products = parseApiMarketProducts(connection.config.products || "[]"); }
+        catch { return []; }
+        return products.map((product) => ({
+            ...connection,
+            id: apiMarketProductConnectionId(connection.id, product),
+            name: `${connection.name} · ${product.slug}`,
+            config: { workspace: product.workspace, slug: product.slug, mediaType: product.mediaType },
+        }));
+    });
+}
+
 export async function markConnectionTested(candidate: ProviderConnection): Promise<void> {
     await withSecurityLock("connections", async () => {
         const connections = await readConnections();
@@ -131,6 +147,10 @@ export async function markConnectionTested(candidate: ProviderConnection): Promi
 
 function envConnection(provider: ProviderId): ProviderConnection | undefined {
     const now = new Date().toISOString();
+    if (provider === "openai" && process.env.OPENAI_API_KEY) {
+        return { id: "env:openai", provider, name: "OpenAI (.env.local)", enabled: true, isDefault: false,
+            config: {}, credentials: { apiKey: process.env.OPENAI_API_KEY }, createdAt: now, updatedAt: now };
+    }
     if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
         return {
             id: "env:openrouter",
@@ -147,6 +167,10 @@ function envConnection(provider: ProviderId): ProviderConnection | undefined {
             createdAt: now,
             updatedAt: now,
         };
+    }
+    if (provider === "elevenlabs" && process.env.ELEVENLABS_API_KEY) {
+        return { id: "env:elevenlabs", provider, name: "ElevenLabs (.env.local)", enabled: true, isDefault: false,
+            config: {}, credentials: { apiKey: process.env.ELEVENLABS_API_KEY }, createdAt: now, updatedAt: now };
     }
     if (provider === "higgsfield" && (process.env.HIGGSFIELD_API_KEY || process.env.HF_CREDENTIALS)) {
         return {
@@ -180,6 +204,19 @@ function envConnection(provider: ProviderId): ProviderConnection | undefined {
             updatedAt: now,
         };
     }
+    if (provider === "apimart" && process.env.APIMART_API_KEY) {
+        return {
+            id: "env:apimart",
+            provider,
+            name: "APIMart (.env.local)",
+            enabled: true,
+            isDefault: false,
+            config: {},
+            credentials: { apiKey: process.env.APIMART_API_KEY },
+            createdAt: now,
+            updatedAt: now,
+        };
+    }
     return undefined;
 }
 
@@ -188,6 +225,14 @@ export async function getConnectionForProvider(
     connectionId?: string
 ): Promise<ProviderConnection | undefined> {
     if (connectionId) {
+        if (provider === "api-market" && !connectionId.startsWith("env:") && connectionId.includes(":")) {
+            const accountId = connectionId.split(":", 1)[0];
+            const account = await getStoredConnection(accountId);
+            const product = account?.provider === "api-market" && account.enabled && account.config.mode === "catalog"
+                ? expandApiMarketConnections([account]).find((entry) => entry.id === connectionId) : undefined;
+            if (product) return product;
+            throw new Error("ERR_CONNECTION_NOT_FOUND");
+        }
         const stored = connectionId.startsWith("env:") ? envConnection(provider) : await getStoredConnection(connectionId);
         if (stored?.enabled && stored.provider === provider && stored.id === connectionId) return stored;
         throw new Error("ERR_CONNECTION_NOT_FOUND");
@@ -197,7 +242,9 @@ export async function getConnectionForProvider(
     const selected = connections.find((connection) =>
         connection.provider === provider && connection.enabled && connection.isDefault
     ) ?? connections.find((connection) => connection.provider === provider && connection.enabled);
-    return selected ?? envConnection(provider);
+    const candidate = selected ?? envConnection(provider);
+    if (candidate?.provider === "api-market" && candidate.config.mode === "catalog") return expandApiMarketConnections([candidate])[0];
+    return candidate;
 }
 
 export async function upsertProviderConnection(input: {
@@ -216,17 +263,18 @@ export async function upsertProviderConnection(input: {
     const current = existingIndex >= 0 ? connections[existingIndex] : undefined;
     if (input.id && !current) throw new Error("ERR_CONNECTION_NOT_FOUND");
     if (current && current.provider !== input.provider) throw new Error("ERR_CONNECTION_PROVIDER_MISMATCH");
+    const nextConfig = input.provider === "api-market" && input.config ? input.config : { ...(current?.config ?? {}), ...(input.config ?? {}) };
     const connection: ProviderConnection = {
         id: current?.id ?? randomId(),
         provider: input.provider,
         name: input.name.trim() || input.provider,
         enabled: input.enabled ?? current?.enabled ?? true,
         isDefault: input.isDefault ?? current?.isDefault ?? false,
-        config: { ...(current?.config ?? {}), ...(input.config ?? {}) },
+        config: nextConfig,
         credentials: { ...(current?.credentials ?? {}), ...input.credentials },
         createdAt: current?.createdAt ?? now,
         updatedAt: now,
-        lastTestedAt: current && JSON.stringify({ ...current.credentials, ...input.credentials }) === JSON.stringify(current.credentials) && JSON.stringify({ ...current.config, ...input.config }) === JSON.stringify(current.config) ? current.lastTestedAt : undefined,
+        lastTestedAt: current && JSON.stringify({ ...current.credentials, ...input.credentials }) === JSON.stringify(current.credentials) && JSON.stringify(nextConfig) === JSON.stringify(current.config) ? current.lastTestedAt : undefined,
     };
 
     if (connection.isDefault) {

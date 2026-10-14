@@ -241,7 +241,7 @@ function RoleUpload({ label, kind, required, items, onAddFile, onAddUrl, onRemov
                             }
                         }}
                         className="rounded-[8px] px-2 text-[10px] font-bold cursor-pointer"
-                        style={{ background: "#d5ff47", color: "#0b1118" }}
+                        style={{ background: "#c62828", color: "#ffffff" }}
                     >
                         {t("add")}
                     </button>

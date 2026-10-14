@@ -38,6 +38,13 @@ export function createBillingStore(sql: Sql) {
             const recent = (await sql("SELECT * FROM generation_usage ORDER BY created DESC LIMIT 50")).map(r => ({ id: r.id, provider: r.provider, connection: r.connection, model: r.model, label: r.label, media: r.media, source: r.source, created: r.created, status: r.status, inputTokens: nullable(r.input_tokens), outputTokens: nullable(r.output_tokens), totalTokens: nullable(r.total_tokens), costUsd: nullable(r.cost_usd), estimateMin: nullable(r.estimate_min), estimateMax: nullable(r.estimate_max) }));
             return { groups, recent };
         },
+        async records(ids: string[]): Promise<UsageRecord[]> {
+            if (!ids.length) return [];
+            if (ids.length > 100 || ids.some(id => !/^studio:[A-Za-z0-9_-]{6,100}$/.test(id))) throw new Error("ERR_INVALID_BODY");
+            const rows = await sql(`SELECT * FROM generation_usage WHERE id IN (${ids.map(() => "?").join(",")})`, ids);
+            const nullable = (value: unknown) => value == null ? undefined : Number(value);
+            return rows.map(row => ({ id: String(row.id), provider: String(row.provider), connection: String(row.connection), model: String(row.model), label: String(row.label), media: row.media as UsageRecord["media"], source: row.source as UsageRecord["source"], created: String(row.created), status: String(row.status), inputTokens: nullable(row.input_tokens), outputTokens: nullable(row.output_tokens), totalTokens: nullable(row.total_tokens), costUsd: nullable(row.cost_usd), estimateMin: nullable(row.estimate_min), estimateMax: nullable(row.estimate_max) }));
+        },
         async rate(key: string): Promise<number | undefined> {
             const rows = await sql("SELECT usd FROM generation_rates WHERE id=?", [key]);
             return rows.length ? Number(rows[0].usd) : undefined;

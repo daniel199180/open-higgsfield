@@ -6,7 +6,7 @@ import type { AccountUsage } from "./types";
 
 export async function billingConnections() {
     const stored = await getStoredConnections();
-    for (const provider of ["openrouter", "higgsfield", "api-market"] as const) {
+    for (const provider of ["openrouter", "elevenlabs", "higgsfield", "api-market", "apimart"] as const) {
         const fallback = await getConnectionForProvider(provider);
         if (fallback && !stored.some(c => c.id === fallback.id)) stored.push(fallback);
     }
@@ -17,6 +17,8 @@ async function account(connection: ProviderConnection): Promise<AccountUsage> {
     if (!connection.enabled) return { ...base, status: "unavailable", note: "Conexión desactivada." };
     if (connection.provider !== "openrouter") return { ...base, status: "unavailable", note: connection.provider === "api-market"
         ? "API.market informa llamadas/cuotas, no un importe USD ni tokens uniformes. Consulta la factura del producto; las tarifas manuales son estimaciones."
+        : connection.provider === "apimart" ? "APIMart no expone un saldo o importe USD uniforme mediante el adaptador. Consulta su panel; las tarifas manuales son estimaciones."
+        : connection.provider === "elevenlabs" ? "ElevenLabs no devuelve un importe USD por solicitud en estas operaciones. Consulta créditos y facturación en su panel; no se muestran como USD confirmados."
         : "El adaptador no dispone de un endpoint de facturación verificado. Consulta el panel de la API; los créditos web no equivalen a USD de la API." };
     try {
         const response = await providerFetch("openrouter", "https://openrouter.ai/api/v1/key", { headers: { Authorization: `Bearer ${connection.credentials.apiKey}` }, signal: AbortSignal.timeout(8000) });

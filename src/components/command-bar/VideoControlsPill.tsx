@@ -118,8 +118,8 @@ export function VideoControlsPill({ model, settings, onSettingsChange }: VideoCo
                                             onClick={() => update({ shotType })}
                                             className="cursor-pointer rounded-[10px] border px-3 py-1 text-[10px] font-bold transition-colors"
                                             style={{
-                                                background: settings.shotType === shotType ? "#d5ff47" : "rgba(255,255,255,.04)",
-                                                color: settings.shotType === shotType ? "#0b1118" : "#f4f7fb",
+                                                background: settings.shotType === shotType ? "#c62828" : "rgba(255,255,255,.04)",
+                                                color: settings.shotType === shotType ? "#ffffff" : "#f4f7fb",
                                                 borderColor: settings.shotType === shotType ? "transparent" : "rgba(255,255,255,.08)",
                                             }}
                                         >
@@ -184,8 +184,8 @@ export function VideoControlsPill({ model, settings, onSettingsChange }: VideoCo
                                             onClick={() => update({ style })}
                                             className="cursor-pointer rounded-[10px] border px-2.5 py-1 text-[10px] font-bold transition-colors"
                                             style={{
-                                                background: settings.style === style ? "#d5ff47" : "rgba(255,255,255,.04)",
-                                                color: settings.style === style ? "#0b1118" : "#f4f7fb",
+                                                background: settings.style === style ? "#c62828" : "rgba(255,255,255,.04)",
+                                                color: settings.style === style ? "#ffffff" : "#f4f7fb",
                                                 borderColor: settings.style === style ? "transparent" : "rgba(255,255,255,.08)",
                                             }}
                                         >

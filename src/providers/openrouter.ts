@@ -4,6 +4,8 @@ import { getImageUrl, getMediaUrls } from "./utils";
 import { providerFetch } from "./secure-fetch";
 import { openRouterFailure } from "./openrouter-errors";
 import { openRouterUsage, UsageReportedError } from "@/billing/usage";
+import { readGeneratedMediaResponse } from "@/lib/media-download";
+import sharp from "sharp";
 
 type OpenRouterConnection = Awaited<ReturnType<typeof getConnectionForProvider>>;
 
@@ -119,6 +121,18 @@ export class OpenRouterProvider implements GenerationProvider {
                     mimeType: item.media_type ?? "image/png",
                 }));
             if (assets.length === 0) throw new UsageReportedError("ERR_NO_IMAGE_GENERATED", openRouterUsage(response.usage));
+            if (request.params.field_values?.background === "transparent") {
+                for (const asset of assets) {
+                    try {
+                        const metadata = await sharp(asset.data).metadata();
+                        if (metadata.format !== "png") throw new Error("non-png");
+                        const statistics = await sharp(asset.data).toColourspace("srgb").ensureAlpha().stats();
+                        if ((statistics.channels[3]?.min ?? 255) === 255) throw new Error("opaque");
+                    } catch {
+                        throw new UsageReportedError("ERR_OPENROUTER_IMAGE_NOT_TRANSPARENT", openRouterUsage(response.usage));
+                    }
+                }
+            }
             return { status: "COMPLETED", assets, usage: openRouterUsage(response.usage) };
         }
 
@@ -168,18 +182,20 @@ export class OpenRouterProvider implements GenerationProvider {
         if (response.status !== "completed") return { status: "IN_PROGRESS", operation, usage: openRouterUsage(response.usage) };
 
         const urls = response.unsigned_urls ?? [];
-        if (urls.length > 0) return { status: "COMPLETED", assets: urls.map((url) => ({ url, mimeType: "video/mp4" })), operation, usage: openRouterUsage(response.usage) };
-
         if (!jobId) return { status: "FAILED", error: "ERR_NO_VIDEO_GENERATED", operation, usage: openRouterUsage(response.usage) };
         try {
             const content = await providerFetch("openrouter", `${baseUrl(connection)}/videos/${encodeURIComponent(jobId)}/content`, { headers: headers(connection) });
-            if (!content.ok) throw new Error("download failed");
+            const media = await readGeneratedMediaResponse(content);
+            if (!media.mimeType.startsWith("video/")) throw new Error("ERR_INVALID_GENERATED_MEDIA");
             return {
                 status: "COMPLETED",
-                assets: [{ data: Buffer.from(await content.arrayBuffer()), mimeType: content.headers.get("content-type") ?? "video/mp4" }],
+                assets: [{ data: media.data, mimeType: media.mimeType }],
                 operation,
                 usage: openRouterUsage(response.usage),
             };
-        } catch { throw new UsageReportedError("ERR_OPENROUTER_VIDEO_DOWNLOAD_FAILED", openRouterUsage(response.usage)); }
+        } catch {
+            if (urls.length > 0) return { status: "COMPLETED", assets: urls.map((url) => ({ url, mimeType: "video/mp4" })), operation, usage: openRouterUsage(response.usage) };
+            throw new UsageReportedError("ERR_OPENROUTER_VIDEO_DOWNLOAD_FAILED", openRouterUsage(response.usage));
+        }
     }
 }

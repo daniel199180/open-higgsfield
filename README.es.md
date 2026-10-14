@@ -144,13 +144,20 @@ CLOUDINARY_URL=
 
 # Opcionales: también puedes conectarlos desde el panel de APIs
 OPENROUTER_API_KEY=
+ELEVENLABS_API_KEY=
 HIGGSFIELD_API_KEY=
 API_MARKET_API_KEY=
 ```
 
-Abre [http://localhost:3000](http://localhost:3000). Copia el código de instalación que aparece en la terminal (caduca a los 30 minutos), crea tu contraseña y guarda el código de recuperación que se muestra una sola vez. Después abre **APIs** para añadir OpenRouter, Higgsfield o productos de API.market desde la interfaz. No necesitas una contraseña de administrador en `.env.local`.
+Abre [http://localhost:3000](http://localhost:3000). Copia el código de instalación que aparece en la terminal (caduca a los 30 minutos), crea tu contraseña y guarda el código de recuperación que se muestra una sola vez. Después abre **Menú → APIs** para añadir OpenRouter, OpenAI, ElevenLabs, Higgsfield, APIMart o productos de API.market desde la interfaz. No necesitas una contraseña de administrador en `.env.local`.
 
-En API.market cada producto requiere `workspace` y `slug`; puedes configurar los demás proveedores mientras eliges un producto. Las claves se guardan cifradas en el servidor; no uses `NEXT_PUBLIC_` para secretos. Consulta [Administración y EasyPanel](docs/admin-setup.md) para persistencia, recuperación, migración y límites de compatibilidad.
+Para editar imágenes con IA, conecta **OpenRouter** en **APIs**, abre cualquier imagen de la galería y pulsa **Editar con IA**. El editor ofrece GPT Image 2.5 Sunburst o Flare cuando la conexión los tenga disponibles con imágenes de referencia. Puedes describir un cambio para toda la imagen, adjuntar una referencia o pintar una zona como guía visual. OpenRouter no expone una máscara nativa en su API de imágenes: la zona pintada se envía como una segunda imagen marcada en rojo y el modelo podría modificar otras partes. Cada resultado se guarda como una versión nueva junto a la original en el lienzo, lista para comparar visualmente o descargar. Las generaciones consumen créditos de OpenRouter; consultar el catálogo no genera imágenes.
+
+**Menú → Editar imágenes** abre un lienzo vacío. **Agregar imagen** muestra la galería y permite elegir una imagen existente o subir una nueva. Las versiones aparecen como imágenes directamente sobre el lienzo, sin tarjetas ni bordes; pasa el cursor sobre una para ver su nombre y descargarla, o haz clic para editar desde esa versión. La herramienta **Mano** permite arrastrar el lienzo con el ratón; al elegir Pintar, Borrar o Comentarios, el arrastre se desactiva para que esos gestos actúen sobre la imagen. El panel derecho muestra los controles de la herramienta elegida. Los controles flotantes permiten ampliar o reducir el lienzo entre 50 % y 250 % y restablecerlo al 100 %. También puedes hacer zoom con el gesto de pellizcar en el panel táctil o con Ctrl/Cmd y la rueda del ratón. Puedes pintar una zona para retocarla, pintar objetos para borrarlos y reconstruir el fondo, añadir hasta ocho comentarios numerados sobre distintas zonas y quitar el fondo completo. Los comentarios y las marcas se envían como referencias visuales a OpenRouter; no son máscaras de edición exacta.
+
+El modo **Audio** permite diseñar voces y guardar clones con ElevenLabs, o probar una clonación por solicitud con OpenRouter (Fish Audio o Seed Audio, según disponibilidad). Las voces guardadas generan locuciones y pueden utilizarse en el nodo **Generar audio** de workflows. Para clonar, usa solo grabaciones sobre las que tengas derechos y consentimiento. Las muestras se envían al proveedor elegido, pero no se guardan en el servidor local; los resultados sí se conservan de forma privada. En EasyPanel, monta un volumen persistente para `OPEN_HIGGSFIELD_STORAGE_DIR`, porque ahí viven las conexiones cifradas y los archivos de audio; la base de datos opcional no sustituye ese volumen.
+
+En APIMart solo necesitas una clave: la aplicación consulta su catálogo y muestra los modelos visuales de imagen y vídeo disponibles para esa cuenta. No requiere `workspace` ni `slug`. API.market es un servicio distinto: allí puedes guardar una clave, buscar productos con suscripción activa y seleccionar varios modelos, o añadir un producto por su URL MCP. Las claves se guardan cifradas en el servidor; no uses `NEXT_PUBLIC_` para secretos. Consulta [Administración y EasyPanel](docs/admin-setup.md) para persistencia, recuperación, migración y límites de compatibilidad.
 
 ### Docker
 

@@ -4,6 +4,7 @@ import { authorizeRequest, limitRequest, readJsonBody, securityError } from "@/l
 import { connectionSchema, validateConnectionConfig } from "@/lib/connection-validation";
 import { recordSecurityEvent } from "@/lib/admin-auth";
 import { testProviderConnection } from "@/providers/test-connection";
+import { parseApiMarketProducts } from "@/lib/api-market-products";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,8 +24,11 @@ export async function POST(req: NextRequest) {
         const stored = body.id ? await getStoredConnection(body.id) : undefined;
         if (body.id && !stored) throw new Error("ERR_CONNECTION_NOT_FOUND");
         if (stored && stored.provider !== body.provider) throw new Error("ERR_CONNECTION_PROVIDER_MISMATCH");
-        const config = { ...stored?.config, ...body.config };
+        const config = body.provider === "api-market" ? body.config : { ...stored?.config, ...body.config };
         validateConnectionConfig({ ...body, config });
+        if (!body.test && body.provider === "api-market" && config.mode === "catalog" && !parseApiMarketProducts(config.products || "[]").length) {
+            throw new Error("ERR_API_MARKET_PRODUCTS_REQUIRED");
+        }
         const credentials = { ...stored?.credentials, ...body.credentials };
         if (!credentials.apiKey) throw new Error("ERR_PROVIDER_API_KEY_REQUIRED");
         if (body.test) {

@@ -34,3 +34,27 @@ export function getEditVariant(caps: ImageModelCapability): EditVariant | undefi
 export function hasRequiredSlots(caps: ImageModelCapability): boolean {
     return caps.media_slots.some(s => s.required);
 }
+
+/**
+ * Normalizes every supported image-format declaration to [value, label] for
+ * the command bar. Provider catalogs use the canonical aspect_ratio field,
+ * while legacy Freepik models use size_ui or a custom field.
+ */
+export function getImageAspectRatios(caps: ImageModelCapability): [string, string][] {
+    if (caps.size_ui) {
+        return caps.size_ui.aspect_ratios.map(({ w, h }) => [`${w}:${h}`, `${w}:${h}`]);
+    }
+
+    const field = caps.custom_fields?.find(item => item.id === "aspect_ratio" && item.type === "select");
+    if (field?.options?.length) {
+        return field.options.map(option => {
+            const match = option.match(/_(\.?\d+)_(\d+)$/);
+            const value = match ? `${match[1]}:${match[2]}` : option;
+            return [value, match ? value : option.replace(/_/g, " ")];
+        });
+    }
+
+    return caps.aspect_ratio !== false
+        ? (caps.aspect_ratio.options?.map(([label, value]) => [value, label]) ?? [])
+        : [];
+}

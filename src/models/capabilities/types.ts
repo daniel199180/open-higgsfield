@@ -49,7 +49,7 @@ export interface ModelCapabilities {
     category?: string;
 
     /** API provider used to execute this model. Legacy entries default to Freepik. */
-    provider?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "higgsfield" | "api-market";
+    provider?: "freepik" | "google-ai-studio" | "google-vertex" | "vercel-ai-gateway" | "openrouter" | "openai" | "higgsfield" | "api-market" | "apimart";
     /** Model identifier expected by the upstream provider. */
     provider_model_id?: string;
     /** Connection selected by the admin connection manager. */

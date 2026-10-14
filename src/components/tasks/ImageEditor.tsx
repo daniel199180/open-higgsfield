@@ -1,0 +1,517 @@
+"use client";
+
+/* eslint-disable @next/next/no-img-element -- authenticated local image and user upload previews */
+
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, Check, Download, Eraser, Expand, Eye, EyeOff, Hand, ImagePlus, Layers, Loader2, MessageCircle, Paintbrush, RotateCcw, Scissors, Sparkles, X, ZoomIn, ZoomOut } from "lucide-react";
+import { useImageTasks, revalidateImageTasks } from "@/hooks/useImageTasks";
+import { DEFAULT_OPENROUTER_EDIT_MODEL, OPENROUTER_EDIT_MODELS } from "@/lib/openrouter-edit-models";
+import { OUTPAINT_RATIOS, planOutpaint, type OutpaintPadding, type OutpaintSide, type OutpaintRatio } from "@/lib/image-outpaint";
+import type { ImageLayerMetadata, ImageLayerSet } from "@/types";
+
+interface Props { imageUrl?: string; taskId?: string; index?: number; prompt?: string; onClose: () => void; embedded?: boolean; onRequestImage?: () => void }
+type Tool = "prompt" | "mask" | "erase" | "comments" | "background" | "expand" | "layers";
+type EditModel = { id: string; label: string; aspectRatios?: string[] };
+type Comment = { id: string; x: number; y: number; text: string };
+type Version = { id: string; url: string; label: string; prompt: string; index: number; parentId?: string };
+
+const EDIT_TOOLS = [
+    { id: "prompt", label: "Imagen completa", icon: Sparkles },
+    { id: "mask", label: "Pintar zona", icon: Paintbrush },
+    { id: "erase", label: "Borrar partes", icon: Eraser },
+    { id: "comments", label: "Comentarios", icon: MessageCircle },
+    { id: "background", label: "Quitar fondo", icon: Scissors },
+    { id: "expand", label: "Expandir bordes", icon: Expand },
+    { id: "layers", label: "Separar en capas", icon: Layers },
+] as const;
+
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 250;
+const ZOOM_STEP = 25;
+
+function paintAt(canvas: HTMLCanvasElement, x: number, y: number, radius: number, erase: boolean) {
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.globalCompositeOperation = erase ? "destination-out" : "source-over";
+    context.fillStyle = erase ? "#000" : "rgba(239,68,68,.5)";
+    context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
+}
+
+export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose, embedded = false, onRequestImage }: Props) {
+    const [currentUrl, setCurrentUrl] = useState(imageUrl);
+    const [currentTaskId, setCurrentTaskId] = useState(taskId ?? "");
+    const [currentIndex, setCurrentIndex] = useState(index);
+    const [rootId, setRootId] = useState(taskId ?? "");
+    const [rootIndex, setRootIndex] = useState(index);
+    const [reference, setReference] = useState<File | null>(null);
+    const [referenceUrl, setReferenceUrl] = useState("");
+    const [tool, setTool] = useState<Tool>("prompt");
+    const [comments, setComments] = useState<Comment[]>([]);
+    const [selectedComment, setSelectedComment] = useState("");
+    const [instruction, setInstruction] = useState("");
+    const [model, setModel] = useState<string>(DEFAULT_OPENROUTER_EDIT_MODEL);
+    const [quality, setQuality] = useState("high");
+    const [aspectRatio, setAspectRatio] = useState("auto");
+    const [outpaintPadding, setOutpaintPadding] = useState<OutpaintPadding>({ left: 0, right: 0, top: 0, bottom: 0 });
+    const [preserveOriginal, setPreserveOriginal] = useState(true);
+    const [brush, setBrush] = useState(5);
+    const [configured, setConfigured] = useState<boolean | null>(null);
+    const [models, setModels] = useState<EditModel[]>(OPENROUTER_EDIT_MODELS.map((item) => ({ ...item })));
+    const [connectionMessage, setConnectionMessage] = useState("");
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [backgroundModels, setBackgroundModels] = useState<Array<{ id: string; name: string }>>([]);
+    const [backgroundModel, setBackgroundModel] = useState("");
+    const [backgroundMessage, setBackgroundMessage] = useState("");
+    const [outpaintPrice, setOutpaintPrice] = useState("Consultar precio");
+    const [painted, setPainted] = useState(false);
+    const [layerTaskId, setLayerTaskId] = useState("");
+    const [layerPrompt, setLayerPrompt] = useState("");
+    const [layerSize, setLayerSize] = useState("auto");
+    const [selectedLayerIndex, setSelectedLayerIndex] = useState(1);
+    const [layerEditPrompt, setLayerEditPrompt] = useState("");
+    const [layerVisibility, setLayerVisibility] = useState<Record<number, boolean>>({});
+    const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+    const [zoom, setZoom] = useState(100);
+    const [panMode, setPanMode] = useState(true);
+    const [draggingCanvas, setDraggingCanvas] = useState(false);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const panGesture = useRef<{ pointerId: number; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean } | null>(null);
+    const suppressCanvasClick = useRef(false);
+    const zoomRef = useRef(100);
+    const pendingZoomAnchor = useRef<{ x: number; y: number; ratio: number } | null>(null);
+    const drawing = useRef(false);
+    const lastPoint = useRef<{ x: number; y: number } | null>(null);
+    const overlayRef = useRef<HTMLCanvasElement>(null);
+    const maskRef = useRef<HTMLCanvasElement | null>(null);
+    const activeCardRef = useRef<HTMLElement>(null);
+    const sourceImageRef = useRef<HTMLImageElement>(null);
+    const borderDrag = useRef<{ pointerId: number; side: OutpaintSide; startX: number; startY: number; initial: number; displayWidth: number; displayHeight: number } | null>(null);
+    const inFlight = useRef(false);
+    const { tasks } = useImageTasks();
+    const layerTask = tasks.find((item) => item.task_id === layerTaskId && item.status === "COMPLETED");
+    const layerSet = layerTask?.reuse_state?.layer_set as ImageLayerSet | undefined;
+    const layerImages = layerTask ? (layerTask.result_urls?.length ? layerTask.result_urls : (layerTask.result_paths ?? []).map((_, item) => `/api/download/${encodeURIComponent(layerTask.task_id)}?index=${item}`)) : [];
+
+    useEffect(() => {
+        let active = true;
+        fetch("/api/images/edit", { cache: "no-store" })
+            .then((response) => response.json())
+            .then((data: { configured?: boolean; models?: EditModel[]; message?: string }) => {
+                if (!active) return;
+                setConfigured(!!data.configured); setConnectionMessage(data.message ?? "");
+                const available = data.models ?? [];
+                setModels(available);
+                if (available.length) setModel(available[0].id);
+            })
+            .catch(() => { if (active) setConfigured(false); });
+        return () => { active = false; };
+    }, []);
+    useEffect(() => {
+        let active = true;
+        fetch("/api/images/remove-background", { cache: "no-store" })
+            .then((response) => response.json())
+            .then((data: { models?: Array<{ id: string; name: string }>; defaultModelId?: string; message?: string }) => {
+                if (!active) return;
+                setBackgroundModels(data.models ?? []); setBackgroundModel(data.defaultModelId ?? ""); setBackgroundMessage(data.message ?? "");
+            })
+            .catch(() => { if (active) setBackgroundMessage("No se pudieron consultar los modelos para quitar fondo."); });
+        return () => { active = false; };
+    }, []);
+    useEffect(() => {
+        if (!reference) { setReferenceUrl(""); return; }
+        const url = URL.createObjectURL(reference); setReferenceUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [reference]);
+    useEffect(() => {
+        if (!currentTaskId) return;
+        const task = tasks.find((item) => item.task_id === currentTaskId);
+        const root = task?.reuse_state?.edit_root_task_id;
+        const savedIndex = task?.reuse_state?.edit_root_index;
+        if (typeof root === "string" && root) { setRootId(root); if (typeof savedIndex === "number") setRootIndex(savedIndex); }
+    }, [currentTaskId, tasks]);
+
+    const versions = rootId ? tasks.filter((task) => task.status === "COMPLETED" && task.reuse_state?.edit_root_task_id === rootId).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [];
+    const originUrl = rootId ? `/api/download/${encodeURIComponent(rootId)}?index=${rootIndex}` : imageUrl;
+    const rootPrompt = tasks.find((task) => task.task_id === rootId)?.prompt ?? (rootId === taskId ? prompt ?? "" : "");
+    const history: Version[] = rootId ? [{ id: rootId, url: originUrl, label: "Original", prompt: rootPrompt, index: rootIndex }, ...versions.map((task, position) => {
+        const notes = task.reuse_state?.edit_comments;
+        const firstNote = Array.isArray(notes) && typeof notes[0]?.text === "string" ? notes[0].text : "";
+        return { id: task.task_id, url: `/api/download/${encodeURIComponent(task.task_id)}?index=0`, label: `Versión ${position + 1}`, prompt: String(task.reuse_state?.edit_instruction || firstNote || (task.reuse_state?.edit_mode === "erase" ? "Borrar partes" : task.prompt || "")), index: 0, parentId: typeof task.reuse_state?.edit_parent_task_id === "string" ? task.reuse_state.edit_parent_task_id : rootId };
+    })] : [];
+    const visibleHistory = currentUrl && currentTaskId && !history.some((item) => item.id === currentTaskId && item.index === currentIndex)
+        ? [...history, { id: currentTaskId, url: currentUrl, label: history.length ? `Versión ${history.length}` : "Original", prompt: "", index: currentIndex }]
+        : history;
+    const selectedVersion = visibleHistory.find((item) => item.id === currentTaskId && item.index === currentIndex);
+    const activeTool = EDIT_TOOLS.find((item) => item.id === tool) ?? EDIT_TOOLS[0];
+    const outpaintRatios = (models.find((item) => item.id === model)?.aspectRatios ?? []).filter((ratio): ratio is OutpaintRatio => OUTPAINT_RATIOS.includes(ratio as OutpaintRatio));
+    let outpaintPlan: ReturnType<typeof planOutpaint> | null = null;
+    let outpaintError = "";
+    if (dimensions.width && dimensions.height && Object.values(outpaintPadding).some(Boolean)) {
+        try { outpaintPlan = planOutpaint(dimensions.width, dimensions.height, outpaintPadding, outpaintRatios); }
+        catch (cause) { outpaintError = cause instanceof Error ? cause.message : "No se puede expandir esta área."; }
+    }
+    const outpaintQuoteRatio = outpaintPlan?.ratio;
+    useEffect(() => {
+        if (tool !== "expand" || !configured || !model || !outpaintQuoteRatio) return;
+        const controller = new AbortController();
+        const query = new URLSearchParams({ provider: "openrouter", model, aspectRatio: outpaintQuoteRatio, quality });
+        setOutpaintPrice("Consultando precio…");
+        fetch(`/api/billing/price?${query}`, { cache: "no-store", signal: controller.signal })
+            .then(async (response) => { if (!response.ok) throw new Error("price unavailable"); return response.json() as Promise<{ minUsd?: number; maxUsd?: number }>; })
+            .then((quote) => setOutpaintPrice(typeof quote.minUsd === "number" && typeof quote.maxUsd === "number"
+                ? `Salida estimada: USD ${quote.minUsd.toFixed(3)}${quote.maxUsd !== quote.minUsd ? `–${quote.maxUsd.toFixed(3)}` : ""} + entradas`
+                : "Precio no disponible; la generación puede tener coste."))
+            .catch(() => { if (!controller.signal.aborted) setOutpaintPrice("Precio no disponible; la generación puede tener coste."); });
+        return () => controller.abort();
+    }, [tool, configured, model, outpaintQuoteRatio, quality]);
+
+    useEffect(() => {
+        activeCardRef.current?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    }, [currentTaskId, currentIndex, visibleHistory.length]);
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        if (!viewport || !currentUrl) return;
+        const onWheel = (event: WheelEvent) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            changeZoom(zoomRef.current + (event.deltaY < 0 ? 10 : -10), event.clientX, event.clientY);
+        };
+        viewport.addEventListener("wheel", onWheel, { passive: false });
+        return () => viewport.removeEventListener("wheel", onWheel);
+    }, [currentUrl]);
+    useLayoutEffect(() => {
+        const viewport = viewportRef.current;
+        const anchor = pendingZoomAnchor.current;
+        if (!viewport || !anchor) return;
+        viewport.scrollLeft = (viewport.scrollLeft + anchor.x) * anchor.ratio - anchor.x;
+        viewport.scrollTop = (viewport.scrollTop + anchor.y) * anchor.ratio - anchor.y;
+        pendingZoomAnchor.current = null;
+    }, [zoom]);
+    useEffect(() => {
+        if (panMode || !panGesture.current) return;
+        const viewport = viewportRef.current;
+        if (viewport?.hasPointerCapture(panGesture.current.pointerId)) viewport.releasePointerCapture(panGesture.current.pointerId);
+        panGesture.current = null;
+        setDraggingCanvas(false);
+    }, [panMode]);
+
+    function changeZoom(next: number, clientX?: number, clientY?: number) {
+        const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+        const previous = zoomRef.current;
+        if (clamped === previous) return;
+        const viewport = viewportRef.current;
+        if (viewport) {
+            const rect = viewport.getBoundingClientRect();
+            pendingZoomAnchor.current = {
+                x: clientX === undefined ? rect.width / 2 : clientX - rect.left,
+                y: clientY === undefined ? rect.height / 2 : clientY - rect.top,
+                ratio: clamped / previous,
+            };
+        }
+        zoomRef.current = clamped;
+        setZoom(clamped);
+    }
+
+    function startPan(event: React.PointerEvent<HTMLDivElement>) {
+        if (!panMode || event.button !== 0 || (event.pointerType !== "mouse" && event.pointerType !== "pen")) return;
+        if ((event.target as HTMLElement).closest("a")) return;
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+        panGesture.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, scrollLeft: viewport.scrollLeft, scrollTop: viewport.scrollTop, moved: false };
+    }
+
+    function movePan(event: React.PointerEvent<HTMLDivElement>) {
+        const gesture = panGesture.current;
+        if (!panMode || !gesture || gesture.pointerId !== event.pointerId) return;
+        const deltaX = event.clientX - gesture.startX;
+        const deltaY = event.clientY - gesture.startY;
+        if (!gesture.moved && Math.hypot(deltaX, deltaY) < 5) return;
+        if (!gesture.moved) {
+            gesture.moved = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDraggingCanvas(true);
+        }
+        event.preventDefault();
+        event.currentTarget.scrollLeft = gesture.scrollLeft - deltaX;
+        event.currentTarget.scrollTop = gesture.scrollTop - deltaY;
+    }
+
+    function endPan(event: React.PointerEvent<HTMLDivElement>) {
+        const gesture = panGesture.current;
+        if (!gesture || gesture.pointerId !== event.pointerId) return;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        panGesture.current = null;
+        setDraggingCanvas(false);
+        if (gesture.moved) {
+            suppressCanvasClick.current = true;
+            window.setTimeout(() => { suppressCanvasClick.current = false; }, 0);
+        }
+    }
+
+    function startBorderDrag(side: OutpaintSide, event: React.PointerEvent<HTMLButtonElement>) {
+        if (busy || !dimensions.width || !dimensions.height || event.button !== 0) return;
+        const rect = sourceImageRef.current?.getBoundingClientRect();
+        if (!rect?.width || !rect.height) return;
+        event.preventDefault(); event.stopPropagation();
+        borderDrag.current = { pointerId: event.pointerId, side, startX: event.clientX, startY: event.clientY, initial: outpaintPadding[side], displayWidth: rect.width, displayHeight: rect.height };
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    function moveBorderDrag(event: React.PointerEvent<HTMLButtonElement>) {
+        const drag = borderDrag.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        event.preventDefault(); event.stopPropagation();
+        const horizontal = drag.side === "left" || drag.side === "right";
+        const delta = horizontal ? event.clientX - drag.startX : event.clientY - drag.startY;
+        const direction = drag.side === "left" || drag.side === "top" ? -1 : 1;
+        const originalSize = horizontal ? dimensions.width : dimensions.height;
+        const screenSize = horizontal ? drag.displayWidth : drag.displayHeight;
+        const next = Math.max(0, Math.min(originalSize, Math.round(drag.initial + direction * delta * originalSize / screenSize)));
+        setOutpaintPadding((current) => current[drag.side] === next ? current : { ...current, [drag.side]: next });
+    }
+
+    function endBorderDrag(event: React.PointerEvent<HTMLButtonElement>) {
+        if (borderDrag.current?.pointerId !== event.pointerId) return;
+        event.stopPropagation();
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        borderDrag.current = null;
+    }
+
+    function resetMask(width = dimensions.width, height = dimensions.height) {
+        const overlay = overlayRef.current;
+        if (overlay) { overlay.width = width; overlay.height = height; overlay.getContext("2d")?.clearRect(0, 0, width, height); }
+        const mask = document.createElement("canvas"); mask.width = width; mask.height = height;
+        const context = mask.getContext("2d");
+        if (context) { context.fillStyle = "#fff"; context.fillRect(0, 0, width, height); }
+        maskRef.current = mask; setPainted(false);
+    }
+
+    function imageLoaded(event: React.SyntheticEvent<HTMLImageElement>) {
+        const { naturalWidth: width, naturalHeight: height } = event.currentTarget;
+        setDimensions({ width, height }); resetMask(width, height);
+        requestAnimationFrame(() => activeCardRef.current?.scrollIntoView({ behavior: "auto", inline: "center", block: "center" }));
+    }
+
+    function pointerPoint(event: React.PointerEvent<HTMLCanvasElement>) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return { x: (event.clientX - rect.left) * dimensions.width / rect.width, y: (event.clientY - rect.top) * dimensions.height / rect.height };
+    }
+
+    function draw(event: React.PointerEvent<HTMLCanvasElement>) {
+        if (!drawing.current || !maskRef.current || !overlayRef.current || (tool !== "mask" && tool !== "erase")) return;
+        const { x, y } = pointerPoint(event);
+        const radius = Math.max(4, dimensions.width * brush / 200);
+        if (lastPoint.current) {
+            for (const [canvas, erase] of [[overlayRef.current, false], [maskRef.current, true]] as const) {
+                const context = canvas.getContext("2d");
+                if (!context) continue;
+                context.globalCompositeOperation = erase ? "destination-out" : "source-over";
+                context.strokeStyle = erase ? "#000" : "rgba(239,68,68,.5)";
+                context.lineWidth = radius * 2; context.lineCap = "round"; context.lineJoin = "round";
+                context.beginPath(); context.moveTo(lastPoint.current.x, lastPoint.current.y); context.lineTo(x, y); context.stroke();
+            }
+        }
+        paintAt(overlayRef.current, x, y, radius, false);
+        paintAt(maskRef.current, x, y, radius, true);
+        lastPoint.current = { x, y }; setPainted(true);
+    }
+
+    function selectVersion(id: string, url: string, nextIndex = 0) {
+        if (id === currentTaskId && nextIndex === currentIndex) return;
+        setCurrentTaskId(id); setCurrentUrl(url); setCurrentIndex(nextIndex); setError("");
+        setDimensions({ width: 0, height: 0 }); setComments([]); setSelectedComment("");
+        setInstruction(""); setReference(null); setOutpaintPadding({ left: 0, right: 0, top: 0, bottom: 0 }); setTool("prompt"); setPanMode(true); resetMask();
+        setLayerTaskId(""); setLayerPrompt(""); setLayerEditPrompt("");
+    }
+
+    function addComment(event: React.MouseEvent<HTMLButtonElement>) {
+        if (tool !== "comments" || comments.length >= 8 || !dimensions.width) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const id = crypto.randomUUID();
+        setComments((current) => [...current, { id, x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)), text: "" }]);
+        setSelectedComment(id); setError("");
+    }
+
+    function selectTool(next: Tool) {
+        if (painted && (tool === "mask" || tool === "erase") && (next === "mask" || next === "erase") && tool !== next) resetMask();
+        setTool(next); setPanMode(false); setError("");
+    }
+
+    async function decomposeLayers() {
+        if (inFlight.current || !currentTaskId) return;
+        inFlight.current = true; setBusy(true); setError("");
+        try {
+            const response = await fetch("/api/images/layers", {
+                method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+                body: JSON.stringify({ operation: "decompose", source: { type: "task", taskId: currentTaskId, index: currentIndex }, prompt: layerPrompt.trim() || undefined, size: layerSize }),
+            });
+            const result = await response.json().catch(() => ({})) as { taskId?: string; error?: string };
+            if (!response.ok || !result.taskId) throw new Error(result.error || "No se pudo separar la imagen en capas.");
+            setLayerTaskId(result.taskId); setSelectedLayerIndex(1); setLayerVisibility({}); setLayerEditPrompt("");
+            await revalidateImageTasks();
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo separar la imagen en capas."); }
+        finally { inFlight.current = false; setBusy(false); }
+    }
+
+    async function editLayer() {
+        if (inFlight.current || !layerTaskId || selectedLayerIndex <= 0 || !layerEditPrompt.trim()) return;
+        inFlight.current = true; setBusy(true); setError("");
+        try {
+            const response = await fetch("/api/images/layers", {
+                method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+                body: JSON.stringify({ operation: "edit-layer", layerTaskId, layerIndex: selectedLayerIndex, prompt: layerEditPrompt.trim() }),
+            });
+            const result = await response.json().catch(() => ({})) as { taskId?: string; error?: string };
+            if (!response.ok || !result.taskId) throw new Error(result.error || "No se pudo editar la capa.");
+            setLayerTaskId(result.taskId); setLayerEditPrompt("");
+            await revalidateImageTasks();
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo editar la capa."); }
+        finally { inFlight.current = false; setBusy(false); }
+    }
+
+    async function uploadSource(file: File | undefined) {
+        if (!file || inFlight.current) return;
+        inFlight.current = true; setUploading(true); setError("");
+        try {
+            const body = new FormData(); body.set("image", file);
+            const response = await fetch("/api/images/source", { method: "POST", body });
+            const result = await response.json().catch(() => ({})) as { taskId?: string; imageUrl?: string; error?: string };
+            if (!response.ok || !result.taskId || !result.imageUrl) throw new Error(result.error || "No se pudo subir la imagen.");
+            await revalidateImageTasks();
+            setRootId(result.taskId); setRootIndex(0); selectVersion(result.taskId, result.imageUrl);
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo subir la imagen."); }
+        finally { inFlight.current = false; setUploading(false); }
+    }
+
+    async function removeBackground() {
+        if (inFlight.current || !currentTaskId || !backgroundModel) return;
+        inFlight.current = true; setBusy(true); setError("");
+        try {
+            const response = await fetch("/api/images/remove-background", {
+                method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+                body: JSON.stringify({ source: { type: "task", taskId: currentTaskId, index: currentIndex }, modelId: backgroundModel }),
+            });
+            const result = await response.json().catch(() => ({})) as { taskId?: string; imageUrl?: string; error?: string };
+            if (!response.ok || !result.taskId || !result.imageUrl) throw new Error(result.error || "No se pudo quitar el fondo.");
+            selectVersion(result.taskId, result.imageUrl);
+            await revalidateImageTasks();
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo quitar el fondo."); }
+        finally { inFlight.current = false; setBusy(false); }
+    }
+
+    async function submit() {
+        if (inFlight.current) return;
+        if (!currentTaskId) { setError("Agrega una imagen antes de generar una versión."); return; }
+        if (!configured) { setError("Conecta OpenRouter en Conexiones de APIs y comprueba que los modelos estén disponibles."); return; }
+        if (tool === "comments" && !comments.length) { setError("Añade al menos un comentario sobre la imagen."); return; }
+        if (tool === "comments" && comments.some((item) => !item.text.trim())) { setError("Escribe el cambio de cada comentario o elimínalo."); return; }
+        if ((tool === "mask" || tool === "erase") && !painted) { setError("Pinta primero la zona que quieres editar."); return; }
+        if ((tool === "prompt" || tool === "mask") && !instruction.trim()) { setError("Escribe el cambio que quieres realizar."); return; }
+        if (tool === "expand" && !outpaintPlan) { setError(outpaintError || "Arrastra al menos un borde de la imagen para definir el área nueva."); return; }
+        if (tool === "expand" && !instruction.trim()) { setError("Escribe qué quieres generar en el área ampliada."); return; }
+        inFlight.current = true; setBusy(true); setError("");
+        try {
+            const hasMask = (tool === "mask" || tool === "erase") && painted;
+            const body = new FormData();
+            body.set("prompt", instruction.trim()); body.set("model", model); body.set("quality", quality); body.set("aspectRatio", tool === "expand" ? "auto" : aspectRatio);
+            body.set("operation", tool === "expand" ? "expand" : tool === "erase" ? "erase" : "edit");
+            if (tool === "expand") { body.set("padding", JSON.stringify(outpaintPadding)); body.set("preserveOriginal", String(preserveOriginal)); }
+            body.set("comments", JSON.stringify(tool === "comments" ? comments.map(({ x, y, text }) => ({ x, y, text: text.trim() })) : []));
+            body.set("sourceTaskId", currentTaskId); body.set("sourceIndex", String(currentIndex));
+            if (reference) body.set("reference", reference);
+            if (hasMask) {
+                const blob = await new Promise<Blob | null>((resolve) => { if (maskRef.current) maskRef.current.toBlob(resolve, "image/png"); else resolve(null); });
+                if (!blob) throw new Error("No se pudo preparar la máscara.");
+                body.set("mask", blob, "mascara.png");
+            }
+            const response = await fetch("/api/images/edit", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body });
+            const result = await response.json().catch(() => ({})) as { taskId?: string; rootTaskId?: string; rootIndex?: number; imageUrl?: string; error?: string; warning?: string };
+            if (!response.ok || !result.taskId || !result.imageUrl) throw new Error(result.error || "No se pudo editar la imagen.");
+            if (result.rootTaskId) setRootId(result.rootTaskId);
+            if (typeof result.rootIndex === "number") setRootIndex(result.rootIndex);
+            selectVersion(result.taskId, result.imageUrl);
+            if (tool === "expand") { setTool("expand"); setPanMode(false); }
+            await revalidateImageTasks();
+            if (result.warning) setError(result.warning);
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo editar la imagen."); }
+        finally { inFlight.current = false; setBusy(false); }
+    }
+
+    return <div className={embedded ? "h-screen bg-black p-2 pt-16 text-white sm:p-4 sm:pt-16" : "fixed inset-0 z-[60] flex items-center justify-center bg-black/95 p-2 text-white sm:p-4"} {...(!embedded ? { role: "dialog", "aria-modal": true, "aria-label": "Editar imagen con IA" } : {})}>
+        <div className={`mx-auto flex w-full max-w-[1900px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl ${embedded ? "h-full" : "h-[98dvh] lg:h-[94dvh]"}`}>
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#111] px-4 py-3 sm:px-6">
+                <div className="flex min-w-0 items-center gap-2"><Sparkles className="h-5 w-5 shrink-0 text-[#ff4d4d]" /><div className="min-w-0"><h2 className="truncate text-sm font-bold sm:text-base">Editor de imágenes</h2><p className="hidden text-[11px] text-white/45 sm:block">Lienzo de versiones · selecciona cualquiera para seguir editando</p></div></div>
+                <div className="flex shrink-0 items-center gap-2">{onRequestImage && <button type="button" onClick={onRequestImage} disabled={busy} className="flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/5 disabled:opacity-45"><ImagePlus className="h-4 w-4" /><span className="hidden sm:inline">{currentUrl ? "Cambiar imagen" : "Agregar imagen"}</span></button>}<button type="button" onClick={onClose} aria-label={embedded ? "Volver al inicio" : "Cerrar editor"} className="flex items-center gap-2 rounded-lg p-2 text-sm text-white/70 hover:bg-white/10">{embedded ? <><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Inicio</span></> : <X className="h-5 w-5" />}</button></div>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
+                <main className="relative min-h-[240px] min-w-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_center,_#1c1c1c_0,_#0a0a0a_68%)]">
+                    {!currentUrl ? <div className="flex h-full items-center justify-center p-6"><div className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-dashed border-white/20 bg-[#141414]/90 px-6 py-12 text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-[#1b1b1b]"><ImagePlus className="h-8 w-8 text-[#ff4d4d]" /></div><h3 className="text-xl font-semibold">Tu lienzo está listo</h3><p className="mt-2 max-w-sm text-sm text-white/50">Agrega una imagen. La original y cada edición aparecerán juntas en este lienzo.</p>{onRequestImage ? <button type="button" onClick={onRequestImage} className="mt-6 rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Agregar imagen</button> : <label className="mt-6 cursor-pointer rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Subir imagen<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}</div></div> : <div ref={viewportRef} tabIndex={0} aria-label="Lienzo de versiones; usa la mano para arrastrar y Control o Comando con la rueda para hacer zoom" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClickCapture={(event) => { if (suppressCanvasClick.current) { event.preventDefault(); event.stopPropagation(); suppressCanvasClick.current = false; } }} className={`h-full w-full overflow-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing [&_button]:cursor-grabbing" : "cursor-grab [&_button]:cursor-grab"}` : ""}`}><div className="flex min-h-[250%] min-w-[250%] w-max items-center justify-center gap-8 p-16 sm:gap-10" style={{ zoom: zoom / 100 }}>{visibleHistory.map((item, position) => {
+                        const selected = item.id === currentTaskId && item.index === currentIndex;
+                        const expandingHere = selected && tool === "expand" && !panMode && dimensions.width > 0 && dimensions.height > 0;
+                        const image = <div className="relative inline-block">
+                            {expandingHere && <div aria-label="Área nueva que se generará" className="pointer-events-none absolute z-0 border-2 border-dashed border-[#ff4d4d] bg-[#292929] bg-[linear-gradient(45deg,#393939_25%,transparent_25%),linear-gradient(-45deg,#393939_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#393939_75%),linear-gradient(-45deg,transparent_75%,#393939_75%)] bg-[length:18px_18px] shadow-[0_0_28px_rgba(255,77,77,.22)]" style={{ left: `${-outpaintPadding.left / dimensions.width * 100}%`, top: `${-outpaintPadding.top / dimensions.height * 100}%`, width: `${(dimensions.width + outpaintPadding.left + outpaintPadding.right) / dimensions.width * 100}%`, height: `${(dimensions.height + outpaintPadding.top + outpaintPadding.bottom) / dimensions.height * 100}%` }} />}
+                            <img ref={selected ? sourceImageRef : undefined} key={`${item.id}:${item.index}`} src={item.url} alt={`${item.label} de la imagen`} draggable={false} onLoad={selected ? imageLoaded : undefined} className="relative z-10 block max-h-[min(74dvh,900px)] max-w-[min(76vw,560px)] object-contain shadow-2xl" />
+                            {selected && <><canvas ref={overlayRef} className={`absolute inset-0 z-20 h-full w-full touch-none ${!panMode && (tool === "mask" || tool === "erase") ? "cursor-crosshair" : "pointer-events-none"}`} aria-label="Pinta la zona a editar o borrar" onPointerDown={(event) => { drawing.current = true; lastPoint.current = null; event.currentTarget.setPointerCapture(event.pointerId); draw(event); }} onPointerMove={draw} onPointerUp={() => { drawing.current = false; lastPoint.current = null; }} onPointerCancel={() => { drawing.current = false; lastPoint.current = null; }} /><div className={`absolute inset-0 z-20 ${!panMode && tool === "comments" ? "" : "pointer-events-none"}`}><button type="button" aria-label="Añadir comentario en esta posición" disabled={panMode || tool !== "comments" || comments.length >= 8} onClick={addComment} className={`absolute inset-0 h-full w-full ${!panMode && tool === "comments" ? "cursor-crosshair" : "pointer-events-none"}`} />{!panMode && tool === "comments" && comments.map((comment, noteIndex) => <button key={comment.id} type="button" title={comment.text || `Comentario ${noteIndex + 1}`} onClick={() => setSelectedComment(comment.id)} style={{ left: `${comment.x * 100}%`, top: `${comment.y * 100}%` }} className="pointer-events-auto absolute grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-[#c62828] text-xs font-bold text-white shadow-lg">{noteIndex + 1}</button>)}</div></>}
+                            {expandingHere && (["left", "right", "top", "bottom"] as OutpaintSide[]).map((side) => <button key={side} type="button" aria-label={`Estirar borde ${side === "left" ? "izquierdo" : side === "right" ? "derecho" : side === "top" ? "superior" : "inferior"}`} title={`Arrastra para expandir ${side === "left" ? "a la izquierda" : side === "right" ? "a la derecha" : side === "top" ? "hacia arriba" : "hacia abajo"}`} disabled={busy} onPointerDown={(event) => startBorderDrag(side, event)} onPointerMove={moveBorderDrag} onPointerUp={endBorderDrag} onPointerCancel={endBorderDrag} className={`absolute z-30 flex h-9 w-9 touch-none items-center justify-center rounded-full border-2 border-white bg-[#c62828] text-lg font-bold text-white shadow-lg hover:scale-110 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50 ${side === "left" || side === "right" ? "cursor-ew-resize" : "cursor-ns-resize"}`} style={{ left: side === "left" ? `${-outpaintPadding.left / dimensions.width * 100}%` : side === "right" ? `${(dimensions.width + outpaintPadding.right) / dimensions.width * 100}%` : "50%", top: side === "top" ? `${-outpaintPadding.top / dimensions.height * 100}%` : side === "bottom" ? `${(dimensions.height + outpaintPadding.bottom) / dimensions.height * 100}%` : "50%", transform: "translate(-50%, -50%)" }}>{side === "left" || side === "right" ? "↔" : "↕"}</button>)}
+                        </div>;
+                        return <article key={`${item.id}:${item.index}`} ref={selected ? activeCardRef : undefined} aria-label={`${item.label}, ${position + 1} de ${visibleHistory.length}${selected ? ", seleccionada" : ""}`} title={item.prompt || item.label} className="group/image relative shrink-0">
+                            {selected ? image : <button type="button" onClick={() => selectVersion(item.id, item.url, item.index)} disabled={busy} aria-label={`Seleccionar ${item.label} para editar`} className="block disabled:opacity-60">{image}</button>}
+                            <span className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity group-hover/image:opacity-100 group-focus-within/image:opacity-100">{item.label}{selected && <Check className="h-3.5 w-3.5 text-[#ff4d4d]" />}</span>
+                            <a href={`/api/download/${encodeURIComponent(item.id)}?index=${item.index}`} download title={`Descargar ${item.label}`} aria-label={`Descargar ${item.label}`} className="absolute bottom-3 right-3 rounded-lg bg-black/75 p-2 text-white opacity-0 shadow-lg transition-opacity hover:bg-black focus:opacity-100 group-hover/image:opacity-100 group-focus-within/image:opacity-100"><Download className="h-4 w-4" /></a>
+                        </article>;
+                    })}{busy && <div role="status" className="flex h-48 w-48 shrink-0 flex-col items-center justify-center gap-3 rounded-2xl bg-[#1d1111] text-center text-xs text-white/70"><Loader2 className="h-6 w-6 animate-spin text-[#ff4d4d]" />Generando nueva versión…</div>}</div></div>}
+                    <nav aria-label="Herramientas de edición" className="absolute inset-x-3 bottom-3 z-10 flex items-center justify-center gap-1 rounded-2xl border border-white/15 bg-[#171717]/95 p-2 shadow-2xl backdrop-blur md:inset-x-auto md:bottom-auto md:left-4 md:top-1/2 md:-translate-y-1/2 md:flex-col"><button type="button" aria-label="Mover lienzo con la mano" title="Mover lienzo con la mano" aria-pressed={panMode} disabled={!currentUrl} onClick={() => setPanMode(true)} className={`grid h-11 w-11 place-items-center rounded-xl transition-colors disabled:opacity-35 ${panMode ? "bg-[#c62828] text-white" : "text-white/60 hover:bg-white/10 hover:text-white"}`}><Hand className="h-5 w-5" /></button>{EDIT_TOOLS.map(({ id, label, icon: Icon }) => <button key={id} type="button" aria-label={label} title={label} aria-pressed={!panMode && tool === id} disabled={!currentUrl || busy} onClick={() => selectTool(id)} className={`grid h-11 w-11 place-items-center rounded-xl transition-colors disabled:opacity-35 ${!panMode && tool === id ? "bg-[#c62828] text-white" : "text-white/60 hover:bg-white/10 hover:text-white"}`}><Icon className="h-5 w-5" /></button>)}</nav>
+                    {currentUrl && <div role="group" aria-label="Zoom del lienzo" className="absolute bottom-20 right-3 z-10 flex items-center gap-1 rounded-xl border border-white/15 bg-[#171717]/95 p-1.5 shadow-xl backdrop-blur md:bottom-4 md:right-4"><button type="button" title="Alejar" aria-label="Alejar lienzo" disabled={zoom <= MIN_ZOOM} onClick={() => changeZoom(zoom - ZOOM_STEP)} className="grid h-9 w-9 place-items-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30"><ZoomOut className="h-4 w-4" /></button><button type="button" title="Restablecer zoom al 100 %" aria-label={`Zoom ${zoom} %, restablecer al 100 %`} onClick={() => changeZoom(100)} className="min-w-14 rounded-lg px-2 py-2 text-center text-xs font-semibold tabular-nums text-white hover:bg-white/10">{zoom}%</button><button type="button" title="Acercar" aria-label="Acercar lienzo" disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(zoom + ZOOM_STEP)} className="grid h-9 w-9 place-items-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30"><ZoomIn className="h-4 w-4" /></button><button type="button" title="Restablecer zoom" aria-label="Restablecer zoom" disabled={zoom === 100} onClick={() => changeZoom(100)} className="hidden h-9 w-9 place-items-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30 sm:grid"><RotateCcw className="h-4 w-4" /></button></div>}
+                </main>
+                <aside aria-label={`Opciones de ${activeTool.label}`} className="max-h-[38dvh] min-h-0 w-full shrink-0 overflow-y-auto border-b border-white/10 bg-[#141414] p-4 md:max-h-none md:w-[320px] md:border-b-0 md:border-l xl:w-[360px]">
+                    <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#c62828]/15 text-[#ff4d4d]"><activeTool.icon className="h-5 w-5" /></div><div><h3 className="text-sm font-bold">{activeTool.label}</h3><p className="text-xs text-white/45">{currentUrl ? `${panMode ? "Mano activa · " : "Editando: "}${selectedVersion?.label ?? "imagen seleccionada"}` : "Primero agrega una imagen"}</p></div></div>
+                    {!currentUrl ? <div className="mt-6 rounded-xl border border-dashed border-white/15 p-4 text-xs text-white/50">Elige una imagen de la galería para activar las herramientas.</div> : tool === "background" ? <section className="mt-6"><p className="text-xs leading-relaxed text-white/55">Crea una nueva versión PNG con fondo transparente. La imagen actual se conserva.</p>{backgroundModels.length ? <><label className="mt-5 block text-xs text-white/70">Modelo de OpenRouter<select aria-label="Modelo para quitar fondo" value={backgroundModel} onChange={(event) => setBackgroundModel(event.target.value)} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white">{backgroundModels.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" disabled={busy || uploading || !backgroundModel} onClick={() => void removeBackground()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}{busy ? "Procesando…" : "Quitar fondo"}</button></> : <p className="mt-4 text-xs text-white/45">{backgroundMessage || "Buscando modelos compatibles…"}</p>}</section> : tool === "layers" ? <section className="mt-6 space-y-4">
+                        {!layerTask ? <>
+                            <p className="text-xs leading-relaxed text-white/55">Seedream 5.0 Pro separa la imagen en una base y capas PNG transparentes para editarlas por separado. La imagen original se conserva.</p>
+                            <label className="block text-xs text-white/70">Indicaciones opcionales<textarea value={layerPrompt} onChange={(event) => setLayerPrompt(event.target.value)} disabled={busy} maxLength={3000} rows={3} placeholder="Ej. Mantén el personaje, el fondo y los textos como elementos separados" className="mt-2 w-full resize-y rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white outline-none focus:border-[#ff4d4d]" /></label>
+                            <label className="block text-xs text-white/70">Resolución<select value={layerSize} onChange={(event) => setLayerSize(event.target.value)} disabled={busy} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white"><option value="auto">Automática</option><option value="1K">1K</option><option value="1.5K">1.5K</option><option value="2K">2K</option></select></label>
+                            <button type="button" disabled={busy} onClick={() => void decomposeLayers()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Layers className="h-4 w-4" />}{busy ? "Separando capas…" : "Separar en capas"}</button>
+                            <p className="text-xs text-white/40">Necesita una conexión activa de APIMart. La salida se guarda localmente porque los enlaces del proveedor caducan.</p>
+                        </> : <>
+                            <div className="rounded-xl border border-white/10 bg-[#0c0c0c] p-3 text-xs text-white/65"><p className="font-semibold text-white">{layerSet?.layers.length ?? 0} capas disponibles</p><p className="mt-1 text-white/40">Selecciona una capa para verla o editarla. La base no se puede editar desde este panel.</p></div>
+                            <div className="relative aspect-[4/3] overflow-hidden rounded-xl border border-white/10 bg-[#090909]" aria-label="Vista compuesta de capas">
+                                {(layerSet?.layers ?? []).slice().sort((a, b) => a.zIndex - b.zIndex).map((layer: ImageLayerMetadata) => {
+                                    if (layerVisibility[layer.index] === false || !layerImages[layer.index]) return null;
+                                    const [left, top, right, bottom] = layer.boundingBox.normalized;
+                                    return <img key={`preview-${layer.index}`} src={layerImages[layer.index]} alt="" className="absolute object-contain" style={{ left: `${left / 10}%`, top: `${top / 10}%`, width: `${Math.max(1, (right - left) / 10)}%`, height: `${Math.max(1, (bottom - top) / 10)}%` }} />;
+                                })}
+                            </div>
+                            <div className="space-y-2">{(layerSet?.layers ?? []).map((layer: ImageLayerMetadata) => { const visible = layerVisibility[layer.index] !== false; return <div key={layer.index} className={`flex items-center gap-2 rounded-xl border p-2 ${selectedLayerIndex === layer.index ? "border-[#ff4d4d]/70 bg-[#251010]" : "border-white/10"}`}><button type="button" onClick={() => setSelectedLayerIndex(layer.index)} className="flex min-w-0 flex-1 items-center gap-2 text-left"><img src={layerImages[layer.index]} alt={layer.name} className="h-12 w-12 rounded-lg bg-[#090909] object-contain" /><span className="min-w-0"><strong className="block truncate text-xs text-white">{layer.name}</strong><span className="block truncate text-[11px] text-white/40">{layer.index === 0 ? "Base" : layer.description || "Capa transparente"}</span></span></button><button type="button" aria-label={visible ? `Ocultar ${layer.name}` : `Mostrar ${layer.name}`} title={visible ? "Ocultar capa" : "Mostrar capa"} onClick={() => setLayerVisibility((current) => ({ ...current, [layer.index]: !visible }))} className="rounded-lg p-2 text-white/60 hover:bg-white/10 hover:text-white">{visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}</button><a href={layerImages[layer.index]} download aria-label={`Descargar ${layer.name}`} className="rounded-lg p-2 text-white/60 hover:bg-white/10 hover:text-white"><Download className="h-4 w-4" /></a></div>; })}</div>
+                            {selectedLayerIndex > 0 && <><label className="block text-xs font-semibold text-white/70">Editar capa seleccionada<textarea value={layerEditPrompt} onChange={(event) => setLayerEditPrompt(event.target.value)} disabled={busy} maxLength={3000} rows={3} placeholder="Ej. Cambia el color de la chaqueta a rojo" className="mt-2 w-full resize-y rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white outline-none focus:border-[#ff4d4d]" /></label><button type="button" disabled={busy || !layerEditPrompt.trim()} onClick={() => void editLayer()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{busy ? "Editando capa…" : "Generar cambio en la capa"}</button></>}
+                            <button type="button" onClick={() => { setLayerTaskId(""); setLayerEditPrompt(""); }} disabled={busy} className="text-xs text-white/60 underline hover:text-white">Separar otra vez esta imagen</button>
+                        </>}
+                    </section> : tool === "expand" ? <div className="mt-6 space-y-5">
+                        <p className="text-xs leading-relaxed text-white/55">Arrastra los tiradores de uno o varios bordes de la imagen. El área cuadriculada que ves en el lienzo será generada por IA; la imagen original no se recortará.</p>
+                        {outpaintPlan ? <div className="rounded-xl border border-white/10 bg-[#0c0c0c] p-3 text-xs text-white/65"><p className="font-semibold text-white">Área final: {outpaintPlan.target.width} × {outpaintPlan.target.height} px</p><p className="mt-1">Izquierda {outpaintPadding.left} · Derecha {outpaintPadding.right} · Arriba {outpaintPadding.top} · Abajo {outpaintPadding.bottom} px</p><p className="mt-1 text-white/40">Formato compatible del modelo: {outpaintPlan.ratio}. El sobrante se recortará fuera del área marcada.</p></div> : <p className="rounded-xl border border-dashed border-white/15 p-3 text-xs text-white/50">Arrastra un borde para marcar el área nueva.</p>}
+                        {Object.values(outpaintPadding).some(Boolean) && <button type="button" onClick={() => setOutpaintPadding({ left: 0, right: 0, top: 0, bottom: 0 })} disabled={busy} className="text-xs text-white/65 underline hover:text-white">Restablecer bordes</button>}
+                        {outpaintError && <p role="alert" className="text-xs text-red-300">{outpaintError}</p>}
+                        <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-xs text-white/70"><input type="checkbox" checked={preserveOriginal} onChange={(event) => setPreserveOriginal(event.target.checked)} disabled={busy} className="mt-0.5 accent-[#c62828]" /><span><strong className="block text-white">Conservar imagen original</strong>Fija sus píxeles sobre el resultado. Puede notarse la unión con los bordes nuevos; desactívalo para que la IA adapte toda la composición.</span></label>
+                        <label className="block text-xs text-white/70">¿Qué debe aparecer en la zona nueva?<textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} disabled={busy} maxLength={3000} rows={3} placeholder="Ej. Continúa el paisaje y el cielo hacia la derecha" className="mt-2 w-full resize-y rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white outline-none focus:border-[#ff4d4d]" /></label>
+                        <label className="block text-xs text-white/70">Modelo de OpenRouter<select value={model} onChange={(event) => setModel(event.target.value)} disabled={busy || !models.length} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white disabled:opacity-50">{models.length ? models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>) : <option value="">Sin modelos compatibles</option>}</select></label>
+                        <label className="block text-xs text-white/70">Calidad<select value={quality} onChange={(event) => setQuality(event.target.value)} disabled={busy} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white"><option value="high">Alta</option><option value="medium">Media</option><option value="low">Baja</option></select></label>
+                        <button type="button" disabled={busy || uploading || !configured || !model || !outpaintPlan || !instruction.trim()} onClick={() => void submit()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Expand className="h-4 w-4" />}{busy ? "Expandiendo imagen…" : "Generar expansión"}</button>
+                        <p className="text-xs text-white/55">{outpaintPrice}</p><p className="text-xs text-white/45">Es una estimación de salida, no el coste total. Generar consume créditos de OpenRouter; la imagen anterior no se reemplaza.</p>
+                    </div> : <div className="mt-6 space-y-5">
+                        {(tool === "mask" || tool === "erase") && <section className="rounded-xl border border-white/10 p-3"><p className="text-xs text-white/60">{tool === "erase" ? "Pinta el objeto a borrar. La IA reconstruirá el fondo." : "Pinta la zona que quieres modificar."}</p><div className="mt-3 flex items-center gap-3"><label htmlFor="edit-brush" className="text-xs text-white/70">Pincel</label><input id="edit-brush" type="range" min="1" max="15" value={brush} onChange={(event) => setBrush(Number(event.target.value))} className="min-w-0 flex-1 accent-[#ff4d4d]" /><button type="button" onClick={() => resetMask()} title="Limpiar zona pintada" aria-label="Limpiar zona pintada" className="rounded-lg p-2 text-white/70 hover:bg-white/10"><X className="h-4 w-4" /></button></div></section>}
+                        {tool === "comments" && <section className="rounded-xl border border-white/10 p-3"><p className="text-xs text-white/60">Haz clic en hasta ocho puntos de la imagen y describe cada cambio. Se enviarán juntos.</p><div className="mt-3 space-y-3">{comments.map((item, position) => <div key={item.id} className={`rounded-lg border p-2 ${selectedComment === item.id ? "border-[#ff4d4d]/60" : "border-white/10"}`}><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold">Punto {position + 1}</span><button type="button" onClick={() => setComments((current) => current.filter((comment) => comment.id !== item.id))} className="text-xs text-white/50 hover:text-red-300">Quitar</button></div><textarea value={item.text} maxLength={400} rows={2} onFocus={() => setSelectedComment(item.id)} onChange={(event) => setComments((current) => current.map((comment) => comment.id === item.id ? { ...comment, text: event.target.value } : comment))} placeholder="Ej. Cambia solo el color de este producto" className="w-full rounded-lg border border-white/15 bg-[#191919] p-2 text-xs outline-none focus:border-[#ff4d4d]" /></div>)}{!comments.length && <p className="text-xs text-white/40">Aún no hay puntos marcados.</p>}</div></section>}
+                        <label htmlFor="edit-instruction" className="block text-xs font-semibold text-white/70">{tool === "comments" ? "Instrucción general (opcional)" : tool === "erase" ? "Indicaciones adicionales (opcional)" : "¿Qué quieres cambiar?"}<textarea id="edit-instruction" value={instruction} onChange={(event) => setInstruction(event.target.value)} disabled={busy} maxLength={3000} rows={4} placeholder={tool === "erase" ? "Ej. Reconstruye la pared detrás del objeto" : "Describe el resultado que quieres obtener"} className="mt-2 w-full resize-y rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white outline-none focus:border-[#ff4d4d] disabled:opacity-50" /></label>
+                        <div className="border-t border-white/10 pt-4"><label className="block text-xs text-white/70">Modelo de OpenRouter<select value={model} onChange={(event) => setModel(event.target.value)} disabled={!models.length || busy} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white disabled:opacity-50">{models.length ? models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>) : <option value="">Sin modelos compatibles</option>}</select></label><div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs text-white/70">Calidad<select value={quality} onChange={(event) => setQuality(event.target.value)} disabled={busy} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-2.5 text-sm text-white"><option value="medium">Media</option><option value="high">Alta</option><option value="low">Baja</option></select></label><label className="text-xs text-white/70">Formato<select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)} disabled={busy} className="mt-2 w-full rounded-xl border border-white/15 bg-[#191919] p-2.5 text-sm text-white"><option value="auto">Automático</option><option value="1:1">1:1</option><option value="3:2">3:2</option><option value="2:3">2:3</option></select></label></div></div>
+                        {!onRequestImage && <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-white/15 p-3 text-xs text-white/70 hover:bg-white/5"><ImagePlus className="h-4 w-4" />{uploading ? "Subiendo…" : "Usar otra imagen desde mi equipo"}<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" disabled={uploading || busy} onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}
+                        <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-white/15 p-3 text-xs text-white/70 hover:bg-white/5"><ImagePlus className="h-4 w-4" />{reference ? reference.name : "Añadir imagen de referencia"}<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" disabled={busy} onChange={(event) => setReference(event.target.files?.[0] ?? null)} /></label>{referenceUrl && <div className="flex items-center gap-2"><img src={referenceUrl} alt="Referencia" className="h-12 w-12 rounded object-cover" /><button type="button" onClick={() => setReference(null)} className="text-xs text-white/60">Quitar referencia</button></div>}
+                        <button type="button" disabled={busy || uploading || !configured || !models.length} onClick={() => void submit()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{busy ? "Procesando imagen…" : "Generar nueva versión"}</button><p className="text-xs text-white/45">La edición consume créditos de OpenRouter. La original no se reemplaza.</p>
+                    </div>}
+                    {configured === false && tool !== "background" && <button type="button" onClick={() => { if (!embedded) onClose(); window.dispatchEvent(new Event("open-higgsfield:open-connections")); }} className="mt-4 text-left text-xs text-amber-200 underline">{connectionMessage || "Conecta OpenRouter en Conexiones de APIs para editar."}</button>}
+                    {error && <p role="alert" className="mt-4 rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-xs text-red-200">{error}</p>}
+                    {rootPrompt && <details className="mt-6 border-t border-white/10 pt-4 text-xs text-white/60"><summary className="cursor-pointer font-semibold text-white/80">Prompt original</summary><p className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">{rootPrompt}</p></details>}
+                </aside>
+            </div>
+        </div>
+    </div>;
+}

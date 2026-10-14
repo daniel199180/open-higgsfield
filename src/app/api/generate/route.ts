@@ -4,9 +4,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getVideoAdapter } from "@/models/adapters/video";
 import { findCapability } from "@/providers/catalog";
 import { submitGeneration } from "@/lib/generation-service";
+import { requireCompany } from "@/library/server";
+import { WorkflowError } from "@/workflows/types";
 import { processImageUpload, processFileUpload, resolveUrl } from "@/lib/media-upload";
 import { publicErrorMessage } from "@/lib/public-error";
 import type { CanonicalParams, CanonicalMediaInputs } from "@/models/canonical";
+import { workflowStore } from "@/workflows/store";
+import { readAsset } from "@/workflows/assets";
+import type { Character } from "@/social/types";
+import { characterIdentityPrompt, characterSnapshot } from "@/social/characters";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -17,6 +23,9 @@ export async function POST(req: NextRequest) {
 async function generate(req: NextRequest) {
     const denied = await requireAdminRequest(); if (denied) return denied;
   const form = await req.formData();
+  let companyId: string | undefined;
+  try { companyId = await requireCompany(String(form.get("company_id") ?? "") || undefined); }
+  catch (error) { return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "Carpeta inválida." }, { status: error instanceof WorkflowError ? error.status : 400 }); }
 
   // ── Parse canonical params from FormData ─────────────────────────────────
   const modelId = String(form.get("model_id") ?? "").trim();
@@ -33,7 +42,21 @@ async function generate(req: NextRequest) {
   let settings: Record<string, unknown> = {};
   try { settings = JSON.parse(settingsRaw); } catch { }
 
-  const prompt = String(form.get("prompt") ?? "").trim();
+  let prompt = String(form.get("prompt") ?? "").trim();
+  let character: Character | undefined;
+  if (form.has("character_id")) {
+    const id = String(form.get("character_id") ?? "");
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "Identificador de personaje inválido." }, { status: 400 });
+    character = await workflowStore().read<Character>(`character:${id}`);
+    if (!character || character.archivedAt) return NextResponse.json({ error: "El personaje ya no está disponible." }, { status: 404 });
+    if (!caps.elements) {
+      const slot = caps.media_slots.find(item => item.kind === "image" && !form.has(`file_${item.id}`) && !form.has(`url_${item.id}`));
+      if (!slot) return NextResponse.json({ error: "Este modelo no dispone de una entrada libre para el personaje. Elige otro modelo o quita la imagen que ocupa esa entrada." }, { status: 400 });
+      const { asset, data } = await readAsset(character.coverAssetId);
+      form.append(`file_${slot.id}`, new File([new Uint8Array(data)], "character-cover.png", { type: asset.mime }));
+    }
+    prompt = [prompt, characterIdentityPrompt(characterSnapshot(character))].filter(Boolean).join("\n\n");
+  }
   if (caps.prompt_required && !prompt) {
     return NextResponse.json({ error: "ERR_PROMPT_REQUIRED" }, { status: 400 });
   }
@@ -110,6 +133,15 @@ async function generate(req: NextRequest) {
   // ── Handle elements ──────────────────────────────────────────────────────
   const elementsPayload: Array<{ frontal_image_url?: string; reference_image_urls?: string[] }> = [];
   if (caps.elements) {
+    if (character) {
+      try {
+        const urls = await Promise.all(character.referenceAssetIds.map(async id => {
+          const { data } = await readAsset(id);
+          return (await processImageUpload(data)).remoteUrl;
+        }));
+        elementsPayload.push({ frontal_image_url: urls[0], reference_image_urls: urls.slice(1) });
+      } catch { return NextResponse.json({ error: "No se pudieron preparar las referencias del personaje." }, { status: 400 }); }
+    }
     const elemCount = parseInt(String(form.get("elem_count") ?? "0"), 10);
     for (let i = 0; i < elemCount; i++) {
       const frontalFile = form.get(`file_elem_${i}_frontal`) as File | null;
@@ -156,6 +188,7 @@ async function generate(req: NextRequest) {
   try {
     const taskId = await submitGeneration({
       mediaType: "video",
+      companyId,
       modelId,
       capabilities: caps,
       params: canonicalParams,

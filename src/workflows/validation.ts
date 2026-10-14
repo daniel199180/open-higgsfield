@@ -1,6 +1,7 @@
 import type { ModelCapabilities } from "@/models/capabilities/types";
 import type { CanonicalParams } from "@/models/canonical";
-import { graphSchema, outputKind, WorkflowError, type WorkflowGraph, type WorkflowNode } from "./types";
+import { graphSchema, MAX_GENERATIONS, outputKind, WorkflowError, type WorkflowGraph, type WorkflowNode } from "./types";
+import { angleFormatOptions, angleFormats, angleFormatKey, angleGenerationCount, angleKey, rasterAngleModel } from "./sales-angles";
 
 export function validateGraph(input: unknown): WorkflowGraph {
     const parsed = graphSchema.safeParse(input);
@@ -8,15 +9,39 @@ export function validateGraph(input: unknown): WorkflowGraph {
     const graph = parsed.data;
     const ids = new Set(graph.nodes.map(n => n.id));
     if (ids.size !== graph.nodes.length || new Set(graph.edges.map(e => e.id)).size !== graph.edges.length) throw new WorkflowError("Hay identificadores duplicados.");
+    if (graph.nodes.filter(node => node.kind === "manualTrigger").length > 1) throw new WorkflowError("Solo se permite un disparador manual por workflow.");
     const handles = new Set<string>();
+    for (const node of graph.nodes) {
+        if (node.kind === "salesAngles") {
+            const angles = node.config.angles ?? [];
+            if (!angles.length || new Set(angles.map(angle => angle.id)).size !== angles.length) throw new WorkflowError(`«${node.label}»: añade ángulos con identificadores únicos.`);
+            for (const angle of angles) {
+                const formats = angleFormats(angle);
+                if (new Set(formats.map(angleFormatKey)).size !== formats.length) throw new WorkflowError(`«${node.label}»: un formato está repetido en el mismo ángulo.`);
+            }
+        } else if (node.config.angles) throw new WorkflowError("Solo el bloque Ángulos de venta admite filas repetibles.");
+    }
     for (const edge of graph.edges) {
         const from = graph.nodes.find(n => n.id === edge.source), to = graph.nodes.find(n => n.id === edge.target);
         if (!from || !to || from.id === to.id) throw new WorkflowError("Conexión inválida.");
+        if (to.kind === "manualTrigger") throw new WorkflowError("El disparador no admite conexiones de entrada.");
+        if (from.kind === "salesAngles") {
+            if (edge.sourceHandle && edge.sourceHandle !== "output" && !from.config.angles?.some(angle => `angle:${angle.id}` === edge.sourceHandle)) throw new WorkflowError("El ángulo conectado ya no existe.");
+        } else if (edge.sourceHandle && edge.sourceHandle !== "output") throw new WorkflowError("Salida de bloque inválida.");
         const key = `${to.id}:${edge.targetHandle}`;
         if (handles.has(key)) throw new WorkflowError("Cada entrada admite una conexión. Usa un bloque separado para otra variante.");
         handles.add(key);
         const kind = outputKind(from);
-        const valid = ["image", "video"].includes(to.kind)
+        if (from.kind === "manualTrigger" && edge.targetHandle !== "start") throw new WorkflowError("El disparador solo se conecta a la entrada de inicio de un nodo.");
+        if (edge.targetHandle === "start" && from.kind !== "manualTrigger") throw new WorkflowError("La entrada de inicio solo admite un disparador.");
+        if (from.kind === "salesAngles" && ["image", "video"].includes(to.kind) && !edge.sourceHandle?.startsWith("angle:")) throw new WorkflowError("Elige una salida individual del ángulo para generar otra imagen o video.");
+        const valid = edge.targetHandle === "start" && from.kind === "manualTrigger"
+            ? true
+            : to.kind === "salesAngles"
+            ? edge.targetHandle === "prompt" && kind === "text"
+            : to.kind === "audio"
+            ? edge.targetHandle === "prompt" && kind === "text"
+            : ["image", "video"].includes(to.kind)
             ? (edge.targetHandle === "prompt" && kind === "text") || (edge.targetHandle.startsWith("slot:") && kind === "image")
             : ["approval", "output"].includes(to.kind) && edge.targetHandle === "input" && kind === outputKind(to);
         if (!valid) throw new WorkflowError("Los tipos de entrada y salida no son compatibles.");
@@ -30,7 +55,9 @@ export function validateGraph(input: unknown): WorkflowGraph {
         visiting.delete(id); visited.add(id);
     };
     graph.nodes.forEach(n => visit(n.id));
-    if (graph.nodes.filter(n => ["image", "video"].includes(n.kind)).length > 6) throw new WorkflowError("Máximo 6 generaciones por ejecución.");
+    for (const trigger of graph.nodes.filter(node => node.kind === "manualTrigger")) if (!graph.edges.some(edge => edge.source === trigger.id)) throw new WorkflowError("Conecta el disparador manual a un nodo.");
+    const count = graph.nodes.reduce((total, node) => total + (node.kind === "salesAngles" ? (node.config.angles ?? []).reduce((sum, angle) => sum + angleGenerationCount(angle), 0) : ["image", "video", "audio"].includes(node.kind) ? 1 : 0), 0);
+    if (count > MAX_GENERATIONS) throw new WorkflowError(`Máximo ${MAX_GENERATIONS} generaciones por ejecución. Divide los ángulos en tandas.`);
     return graph;
 }
 
@@ -81,13 +108,29 @@ export function validateRunnable(graph: WorkflowGraph, caps: Record<string, Mode
         const incoming = graph.edges.filter(e => e.target === node.id);
         if (node.kind === "prompt" && !node.config.text?.trim()) throw new WorkflowError(`Escribe el texto de «${node.label}».`);
         if (node.kind === "asset" && !node.config.assetId) throw new WorkflowError(`Sube una imagen en «${node.label}».`);
-        if (["approval", "output"].includes(node.kind) && incoming.length !== 1) throw new WorkflowError(`Conecta la entrada de «${node.label}».`);
+        if (node.kind === "audio" && (!node.config.voiceId || !node.config.modelId || (!incoming.some(edge => edge.targetHandle === "prompt") && !node.config.text?.trim()))) throw new WorkflowError(`Elige voz, modelo y texto en «${node.label}».`);
+        if (["approval", "output"].includes(node.kind) && incoming.filter(e => e.targetHandle === "input").length !== 1) throw new WorkflowError(`Conecta la entrada de «${node.label}».`);
+        if (node.kind === "salesAngles") {
+            if (!incoming.some(edge => edge.targetHandle === "prompt") && !node.config.text?.trim()) throw new WorkflowError(`Escribe el contexto de «${node.label}» o conecta un prompt.`);
+            for (const angle of node.config.angles ?? []) {
+                if (!angle.text || !angle.modelId || !angle.format) throw new WorkflowError(`Completa el ángulo, modelo y formato en «${node.label}».`);
+                const cap = caps[angleKey(node.id, angle.id)];
+                if (!cap || cap.id !== angle.modelId) throw new WorkflowError(`El modelo de un ángulo en «${node.label}» ya no está disponible.`);
+                if (!["openrouter", "higgsfield", "apimart"].includes(cap.provider ?? "") || !rasterAngleModel(cap)) throw new WorkflowError(`«${node.label}»: elige un modelo de imagen raster con formato explícito y sin referencia obligatoria de OpenRouter, Higgsfield o APIMart.`);
+                for (const format of angleFormats(angle)) {
+                    if (!angleFormatOptions(cap).some(option => option.field === format.formatField && option.value === format.format)) throw new WorkflowError(`«${node.label}»: el modelo no admite el formato ${format.format}.`);
+                    const params = { [format.formatField]: format.format, ...(angle.resolution ? { resolution: angle.resolution } : {}) };
+                    canonicalParams({ ...node, config: { params } }, cap, "Prompt de ángulo");
+                }
+            }
+            continue;
+        }
         if (!["image", "video"].includes(node.kind)) continue;
         const cap = caps[node.id];
         if (!cap) throw new WorkflowError(`Elige un modelo disponible en «${node.label}».`);
         if (cap.provider === "api-market") throw new WorkflowError("API.market necesita un contrato específico de entradas y salidas antes de habilitarse en workflows. La generación individual sigue disponible.");
-        if (cap.provider !== "openrouter" && cap.provider !== "higgsfield") throw new WorkflowError("La primera versión de workflows admite OpenRouter y Higgsfield. Los demás proveedores siguen disponibles en Studio.");
-        for (const edge of incoming.filter(e => e.targetHandle !== "prompt")) {
+        if (cap.provider !== "openrouter" && cap.provider !== "higgsfield" && cap.provider !== "apimart") throw new WorkflowError("La primera versión de workflows admite OpenRouter, Higgsfield y APIMart. Los demás proveedores siguen disponibles en Studio.");
+        for (const edge of incoming.filter(e => e.targetHandle.startsWith("slot:"))) {
             const slot = cap.media_slots.find(s => `slot:${s.id}` === edge.targetHandle && s.kind === "image");
             if (!slot) throw new WorkflowError(`«${node.label}»: el modelo no admite esa entrada de imagen.`);
             if (cap.provider === "higgsfield" && cap.provider_model_id?.includes("text-to-video")) throw new WorkflowError("Ese endpoint de Higgsfield es de texto a video. Elige un modelo con imagen de entrada verificada.");

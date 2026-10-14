@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authorizeRequest, limitRequest, readLimitedBody } from "@/lib/api-security";
 import { workflowStore } from "@/workflows/store";
-import { startRun, saveWorkflow, runAction } from "@/workflows/service";
+import { startRun, saveWorkflow, runAction, archiveWorkflow, restoreWorkflow } from "@/workflows/service";
 import { graphSchema, idSchema, publicRun, WorkflowError, type Workflow, type WorkflowRun, type Asset } from "@/workflows/types";
 import { workflowError } from "@/workflows/http";
+import { requireCompany } from "@/library/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const commandSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("save"), id: z.uuid().optional(), revision: z.number().int().nonnegative().optional(), name: z.string().trim().min(1).max(100), graph: graphSchema }).strict(),
-    z.object({ action: z.literal("run"), workflowId: z.uuid(), revision: z.number().int().positive(), key: z.uuid(), targetId: idSchema.optional(), acknowledgeCost: z.literal(true) }).strict(),
-    z.object({ action: z.enum(["approve", "cancel", "resume"]), runId: z.uuid(), nodeId: idSchema.optional() }).strict(),
+    z.object({ action: z.literal("run"), workflowId: z.uuid(), revision: z.number().int().positive(), key: z.uuid(), targetId: idSchema.optional(), companyId: z.uuid().optional(), acknowledgeCost: z.literal(true) }).strict(),
+    z.object({ action: z.literal("archive"), workflowId: z.uuid(), revision: z.number().int().positive() }).strict(),
+    z.object({ action: z.literal("restore"), workflowId: z.uuid(), revision: z.number().int().positive() }).strict(),
+    z.object({ action: z.enum(["approve", "cancel", "resume", "retry"]), runId: z.uuid(), nodeId: idSchema.optional() }).strict(),
 ]);
 
 export async function GET(req: NextRequest) {
@@ -20,7 +23,8 @@ export async function GET(req: NextRequest) {
         const store = workflowStore();
         const [workflows, runs, assets] = await Promise.all([store.list<Workflow>("workflow:"), store.list<WorkflowRun>("run:"), store.list<Asset>("asset:")]);
         return NextResponse.json({
-            workflows: workflows.sort((a, b) => b.updatedAt - a.updatedAt),
+            workflows: workflows.filter(w => !w.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt),
+            deletedWorkflows: workflows.filter(w => !!w.deletedAt).sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)),
             runs: runs.sort((a, b) => b.createdAt - a.createdAt).map(({ id, workflowId, name, revision, status, createdAt }) => ({ id, workflowId, name, revision, status, createdAt })),
             assets: assets.sort((a, b) => b.createdAt - a.createdAt).slice(0, 100),
             storage: process.env.WORKFLOWS_DATABASE_URL ? "PostgreSQL" : "SQLite local",
@@ -34,7 +38,9 @@ export async function POST(req: NextRequest) {
         const input = commandSchema.parse(JSON.parse(Buffer.from(await readLimitedBody(req, 128 * 1024)).toString("utf8")));
         const limited = await limitRequest(input.action === "run" ? "workflow-start" : "workflow-edit", input.action === "run" ? 6 : 60); if (limited) return limited;
         if (input.action === "save") return NextResponse.json({ workflow: await saveWorkflow(input) });
-        if (input.action === "run") return NextResponse.json({ run: publicRun(await startRun(input)) }, { status: 202 });
+        if (input.action === "run") { await requireCompany(input.companyId); return NextResponse.json({ run: publicRun(await startRun(input)) }, { status: 202 }); }
+        if (input.action === "archive") return NextResponse.json({ workflow: await archiveWorkflow(input.workflowId, input.revision) });
+        if (input.action === "restore") return NextResponse.json({ workflow: await restoreWorkflow(input.workflowId, input.revision) });
         return NextResponse.json({ run: publicRun(await runAction(input.runId, input.action, input.nodeId)) });
     } catch (error) { return workflowError(error); }
 }

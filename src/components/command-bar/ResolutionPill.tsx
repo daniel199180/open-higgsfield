@@ -46,8 +46,8 @@ export function ResolutionPill({ resolutions, value, onChange }: ResolutionPillP
                             onClick={() => { onChange(res.id); setOpen(false); }}
                             className="w-full flex items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-xs transition-colors cursor-pointer"
                             style={{
-                                background: selected ? "rgba(213,255,71,.1)" : "transparent",
-                                color: selected ? "#d5ff47" : "#f4f7fb",
+                                background: selected ? "rgba(255,77,77,.1)" : "transparent",
+                                color: selected ? "#ff4d4d" : "#f4f7fb",
                                 fontWeight: selected ? 700 : 500,
                             }}
                             onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,.06)"; }}
@@ -55,7 +55,7 @@ export function ResolutionPill({ resolutions, value, onChange }: ResolutionPillP
                         >
                             {(() => { const Icon = RESOLUTION_ICONS[res.id] ?? Diamond; return <Icon className="h-3.5 w-3.5 shrink-0" />; })()}
                             <span>{res.id}</span>
-                            {selected && <Check className="h-3.5 w-3.5 ml-auto" style={{ color: "#d5ff47" }} />}
+                            {selected && <Check className="h-3.5 w-3.5 ml-auto" style={{ color: "#ff4d4d" }} />}
                         </button>
                     );
                 })}

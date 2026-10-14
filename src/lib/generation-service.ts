@@ -11,6 +11,7 @@ import { trackedSubmit } from "@/billing/tracking";
 
 interface SubmitGenerationInput {
     mediaType: "image" | "video";
+    companyId?: string;
     modelId: string;
     capabilities: ModelCapabilities;
     params: CanonicalParams;
@@ -35,6 +36,7 @@ export async function submitGeneration(input: SubmitGenerationInput): Promise<st
     const events: TaskEvent[] = [];
     const task = {
         task_id: taskId,
+        company_id: input.companyId,
         status: submission.status,
         freepik_status: submission.status,
         provider_id: providerId,

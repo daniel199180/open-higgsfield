@@ -8,8 +8,11 @@ export type ProviderId =
     | "google-vertex"
     | "vercel-ai-gateway"
     | "openrouter"
+    | "openai"
+    | "elevenlabs"
     | "higgsfield"
-    | "api-market";
+    | "api-market"
+    | "apimart";
 export type GenerationStatus = "CREATED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "ERROR" | "CANCELLED";
 
 export interface GeneratedAsset {

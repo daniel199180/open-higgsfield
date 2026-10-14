@@ -8,7 +8,7 @@ import { getConnectionForProvider } from "@/lib/connection-store";
 
 export const runtime = "nodejs";
 const selectionSchema = z.object({
-    provider: z.enum(["openrouter", "higgsfield", "api-market", "freepik", "google-ai-studio", "google-vertex", "vercel-ai-gateway"]),
+    provider: z.enum(["openrouter", "higgsfield", "api-market", "apimart", "freepik", "google-ai-studio", "google-vertex", "vercel-ai-gateway"]),
     connectionId: z.string().max(100).optional(),
     model: z.string().min(1).max(300).regex(/^[a-zA-Z0-9_.:/-]+$/).refine(s => !s.split("/").includes("..")),
     resolution: z.string().max(32).optional(), quality: z.string().max(32).optional(), aspectRatio: z.string().max(32).optional(), size: z.string().max(32).optional(),
@@ -17,7 +17,7 @@ async function selection(value: unknown) {
     const parsed = selectionSchema.safeParse(value);
     if (!parsed.success) throw new Error("ERR_INVALID_BODY");
     const result = parsed.data;
-    if (["openrouter", "higgsfield", "api-market"].includes(result.provider)) {
+    if (["openrouter", "higgsfield", "api-market", "apimart"].includes(result.provider)) {
         const connection = await getConnectionForProvider(result.provider, result.connectionId);
         if (!connection) throw new Error("ERR_CONNECTION_NOT_FOUND");
         result.connectionId = connection.id;

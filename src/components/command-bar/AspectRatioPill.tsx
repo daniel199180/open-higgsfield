@@ -53,31 +53,59 @@ interface CustomFields {
 
 interface AspectRatioPillProps {
     ratios: [string, string][];
-    value: string;
-    onChange: (ratio: string) => void;
+    value?: string;
+    onChange?: (ratio: string) => void;
+    selectedValues?: string[];
+    onSelectedValuesChange?: (ratios: string[]) => void;
+    multiSelect?: boolean;
+    allowAuto?: boolean;
     customFields?: CustomFields | null;
     fieldValues?: Record<string, unknown>;
     onFieldChange?: (id: string, val: unknown) => void;
 }
 
-export function AspectRatioPill({ ratios, value, onChange, customFields, fieldValues, onFieldChange }: AspectRatioPillProps) {
+export function AspectRatioPill({ ratios, value = "", onChange, selectedValues, onSelectedValuesChange, multiSelect = false, allowAuto = true, customFields, fieldValues, onFieldChange }: AspectRatioPillProps) {
     const [open, setOpen] = useState(false);
-    const displayValue = prettifyRatio(value || ratios[0]?.[0] || "16:9");
+    const activeValues = selectedValues ?? (value ? [value] : []);
+    const firstValue = activeValues[0] ?? "";
+    const displayValue = activeValues.length > 1
+        ? `${activeValues.length} formatos`
+        : firstValue ? prettifyRatio(firstValue) : allowAuto ? "Auto" : "Elige formato";
 
     const portrait = ratios.filter(([val]) => classifyRatio(val) === "portrait");
     const square = ratios.filter(([val]) => classifyRatio(val) === "square");
     const landscape = ratios.filter(([val]) => classifyRatio(val) === "landscape");
 
+    function selectRatio(ratio: string, keepOpen = false) {
+        if (selectedValues && onSelectedValuesChange) {
+            if (ratio === "custom") {
+                onSelectedValuesChange(["custom"]);
+                return;
+            }
+            const next = multiSelect
+                ? selectedValues.includes(ratio)
+                    ? selectedValues.filter((selected) => selected !== ratio)
+                    : [...selectedValues.filter((selected) => selected !== "custom"), ratio]
+                : ratio ? [ratio] : [];
+            onSelectedValuesChange(next);
+            if (!multiSelect && !keepOpen) setOpen(false);
+            return;
+        }
+        onChange?.(ratio);
+        if (!keepOpen) setOpen(false);
+    }
+
     function renderRatioButton(val: string, label: string) {
-        const selected = value === val;
+        const selected = activeValues.includes(val);
         return (
             <button
                 type="button"
-                onClick={() => { onChange(val); setOpen(false); }}
+                aria-pressed={selected}
+                onClick={() => selectRatio(val)}
                 className="flex items-center gap-2 rounded-[10px] px-2 py-2 text-xs transition-colors cursor-pointer w-full"
                 style={{
-                    background: selected ? "rgba(213,255,71,.1)" : "transparent",
-                    color: selected ? "#d5ff47" : "#f4f7fb",
+                    background: selected ? "rgba(255,77,77,.1)" : "transparent",
+                    color: selected ? "#ff4d4d" : "#f4f7fb",
                     fontWeight: selected ? 700 : 500,
                 }}
                 onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,.06)"; }}
@@ -85,21 +113,22 @@ export function AspectRatioPill({ ratios, value, onChange, customFields, fieldVa
             >
                 <AspectRatioIcon ratio={val} />
                 <span className="flex-1 text-left">{label}</span>
-                {selected && <Check className="h-3 w-3 shrink-0" style={{ color: "#d5ff47" }} />}
+                {selected && <Check className="h-3 w-3 shrink-0" style={{ color: "#ff4d4d" }} />}
             </button>
         );
     }
 
     function renderTopButton(val: string, label: string, Icon: React.ElementType, keepOpen?: boolean) {
-        const selected = value === val;
+        const selected = val === "" ? activeValues.length === 0 : activeValues.includes(val);
         return (
             <button
                 type="button"
-                onClick={() => { onChange(val); if (!keepOpen) setOpen(false); }}
+                aria-pressed={selected}
+                onClick={() => selectRatio(val, keepOpen)}
                 className="flex items-center gap-2 w-full rounded-[10px] px-2 py-2 text-xs transition-colors cursor-pointer"
                 style={{
-                    background: selected ? "rgba(213,255,71,.1)" : "transparent",
-                    color: selected ? "#d5ff47" : "#f4f7fb",
+                    background: selected ? "rgba(255,77,77,.1)" : "transparent",
+                    color: selected ? "#ff4d4d" : "#f4f7fb",
                     fontWeight: selected ? 700 : 500,
                 }}
                 onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "rgba(255,255,255,.06)"; }}
@@ -107,7 +136,7 @@ export function AspectRatioPill({ ratios, value, onChange, customFields, fieldVa
             >
                 <Icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{label}</span>
-                {selected && <Check className="h-3 w-3 shrink-0" style={{ color: "#d5ff47" }} />}
+                {selected && <Check className="h-3 w-3 shrink-0" style={{ color: "#ff4d4d" }} />}
             </button>
         );
     }
@@ -119,20 +148,27 @@ export function AspectRatioPill({ ratios, value, onChange, customFields, fieldVa
             width="w-fit"
             trigger={
                 <>
-                    <AspectRatioIcon ratio={value} />
+                    <AspectRatioIcon ratio={firstValue} />
                     <span>{displayValue}</span>
                 </>
             }
         >
             <p className="text-[10px] font-extrabold uppercase tracking-[.08em] mb-2 px-1" style={{ color: "rgba(244,247,251,.44)" }}>
-                Aspect Ratio
+                {selectedValues ? "FORMATOS DE IMAGEN" : "Aspect Ratio"}
             </p>
+            {selectedValues && (
+                <p className="mb-2 px-1 text-[11px] leading-relaxed text-white/55">
+                    {multiSelect
+                        ? "Selecciona uno o varios formatos. El primero será la imagen principal y servirá de referencia para adaptar los demás."
+                        : "Este modelo permite elegir un formato por generación."}
+                </p>
+            )}
 
-            {/* Unified 2-column layout: Auto over Portrait | 1:1 over Landscape */}
+            {/* Unified 2-column layout: optional Auto over Portrait | 1:1 over Landscape */}
             <div className="flex gap-2">
                 {/* Left column */}
                 <div className="flex flex-col min-w-0">
-                    {renderTopButton("", "Auto", Wand2)}
+                    {allowAuto && renderTopButton("", "Auto", Wand2)}
                     {portrait.length > 0 && (
                         <>
                             <div className="h-px my-1.5" style={{ background: "rgba(255,255,255,.08)" }} />
@@ -175,7 +211,7 @@ export function AspectRatioPill({ ratios, value, onChange, customFields, fieldVa
                     {renderTopButton("custom", "Custom", SlidersHorizontal, true)}
                 </>
             )}
-            {value === "custom" && customFields && (
+            {firstValue === "custom" && customFields && (
                 <div className="mt-2 space-y-2">
                     <div className="flex gap-2">
                         <div className="flex-1 space-y-1">

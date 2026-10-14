@@ -1,23 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Settings2, Workflow, CircleDollarSign } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { CommandBar } from "@/components/command-bar/CommandBar";
 import { ResultsGrid } from "@/components/tasks/ResultsGrid";
+import { CarouselResults } from "@/components/social/CarouselResults";
+import { LogoResults } from "@/components/studio/LogoResults";
+import { AudioStudio } from "@/components/studio/AudioStudio";
+import { ImageEditingStudio } from "@/components/studio/ImageEditingStudio";
+import { CharacterStudio } from "@/components/characters/CharacterStudio";
+import { CompanyLibrary } from "@/components/studio/CompanyLibrary";
+import type { StudioMode } from "@/components/studio/StudioModePill";
 import { AdminConnectionsPanel } from "@/components/studio/AdminConnectionsPanel";
 import { mergeRuntimeCatalog } from "@/lib/runtime-catalog";
 import { AdminAccess } from "./AdminAccess";
+import { StudioNavigation } from "./StudioNavigation";
 import { UsagePanel } from "./UsagePanel";
 
 const WorkflowStudio = dynamic(() => import("@/components/workflows/WorkflowStudio").then(module => module.WorkflowStudio), { ssr: false });
+const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").then(module => module.SocialStudio), { ssr: false });
 
 export function StudioShell() {
-  const [mode, setMode] = useState<"video" | "image">("image");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mode, setMode] = useState<StudioMode>("image");
   const [usageOpen, setUsageOpen] = useState(false);
-  const [workspace, setWorkspace] = useState<"studio" | "workflows">("studio");
+  const [workspace, setWorkspace] = useState<"studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "apis">("studio");
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const beforeLeaveWorkflow = useRef<(() => Promise<boolean>) | null>(null);
+  const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
+  const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "apis") => {
+    setWorkspace(next);
+    const url = new URL(window.location.href);
+    if (next === "studio") url.searchParams.delete("workspace");
+    else url.searchParams.set("workspace", next);
+    if (next !== "workflows") { url.searchParams.delete("workflow"); url.searchParams.delete("run"); }
+    window.history.replaceState(null, "", url);
+  }, []);
+  const selectNavigation = useCallback(async (destination: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "usage" | "apis") => {
+    if (destination === "usage") { setUsageOpen(true); return; }
+    if (destination === workspace) return;
+    if (workspace === "workflows" && beforeLeaveWorkflow.current && !await beforeLeaveWorkflow.current()) return;
+    navigateWorkspace(destination);
+  }, [navigateWorkspace, workspace]);
+  const changeMode = useCallback((next: StudioMode) => {
+    setMode(next);
+    const url = new URL(window.location.href);
+    if (next === "carousel" || next === "logo" || next === "audio") url.searchParams.set("mode", next);
+    else { url.searchParams.delete("mode"); url.searchParams.delete("carousel"); }
+    window.history.replaceState(null, "", url);
+  }, []);
   const checkSession = useCallback(async () => {
     try {
       const response = await fetch("/api/admin/auth", { cache: "no-store" });
@@ -38,11 +68,40 @@ export function StudioShell() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (new URLSearchParams(window.location.search).get("workspace") === "workflows") setWorkspace("workflows");
+      const requestedWorkspace = new URLSearchParams(window.location.search).get("workspace");
+      if (requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
+      const requestedMode = new URLSearchParams(window.location.search).get("mode");
+      if (requestedMode === "carousel" || requestedMode === "logo" || requestedMode === "audio") setMode(requestedMode);
       void checkSession();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [checkSession]);
+
+  useEffect(() => {
+    const openSocial = () => {
+      void selectNavigation("social");
+    };
+    window.addEventListener("open-higgsfield:open-social", openSocial);
+    return () => window.removeEventListener("open-higgsfield:open-social", openSocial);
+  }, [selectNavigation]);
+
+  useEffect(() => {
+    const openCharacters = () => { void selectNavigation("characters"); };
+    window.addEventListener("open-higgsfield:open-characters", openCharacters);
+    return () => window.removeEventListener("open-higgsfield:open-characters", openCharacters);
+  }, [selectNavigation]);
+
+  useEffect(() => {
+    const openCompanies = () => { void selectNavigation("companies"); };
+    window.addEventListener("open-higgsfield:open-companies", openCompanies);
+    return () => window.removeEventListener("open-higgsfield:open-companies", openCompanies);
+  }, [selectNavigation]);
+
+  useEffect(() => {
+    const openConnections = () => { void selectNavigation("apis"); };
+    window.addEventListener("open-higgsfield:open-connections", openConnections);
+    return () => window.removeEventListener("open-higgsfield:open-connections", openConnections);
+  }, [selectNavigation]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -61,41 +120,23 @@ export function StudioShell() {
     return () => { cancelled = true; window.clearTimeout(timer); window.removeEventListener("open-higgsfield:connections-updated", refresh); };
   }, [loadCatalog, authenticated]);
 
-  if (!authenticated) return <main className="grid min-h-screen place-items-center bg-[#060606] p-4 text-white">{authenticated === null ? <p>Comprobando acceso…</p> : <AdminAccess onReady={() => { setAuthenticated(true); setSettingsOpen(true); }} />}</main>;
-
-  if (workspace === "workflows") return <WorkflowStudio onBack={() => {
-    setWorkspace("studio");
-    const url = new URL(window.location.href);
-    for (const key of ["workspace", "workflow", "run"]) url.searchParams.delete(key);
-    window.history.replaceState(null, "", url);
-  }} />;
+  if (!authenticated) return <main className="grid min-h-screen place-items-center bg-black p-4 text-white">{authenticated === null ? <p>Comprobando acceso…</p> : <AdminAccess onReady={() => setAuthenticated(true)} />}</main>;
 
   return (
-    <div className="relative h-screen overflow-hidden" style={{ background: "#060606" }}>
-      {/* Workspace — full screen, scrolls naturally */}
-      <ResultsGrid mode={mode} />
-
-      <button type="button" onClick={() => {
-        setWorkspace("workflows");
-        const url = new URL(window.location.href); url.searchParams.set("workspace", "workflows"); window.history.replaceState(null, "", url);
-      }} className="fixed left-5 top-5 z-30 flex items-center gap-2 rounded-full border border-[#d5ff47]/25 bg-black/70 px-4 py-2 text-xs text-[#d5ff47] shadow-lg backdrop-blur-md">
-        <Workflow className="h-3.5 w-3.5" /> Workflows
-      </button>
-
-      <button type="button" onClick={() => setUsageOpen(true)} className="fixed right-20 top-5 z-30 flex items-center gap-2 rounded-full border border-[#d5ff47]/25 bg-black/70 px-3 py-2 text-xs text-[#d5ff47] shadow-lg backdrop-blur-md sm:right-28"><CircleDollarSign className="h-3.5 w-3.5" />Consumo</button>
-      <button
-        type="button"
-        onClick={() => setSettingsOpen(true)}
-        className="fixed right-5 top-5 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-3 py-2 text-xs text-white/70 shadow-lg backdrop-blur-md transition hover:border-[#d5ff47]/50 hover:text-white"
-        title="Configurar APIs"
-      >
-        <Settings2 className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">APIs</span>
-      </button>
-
-      {/* Bottom composer */}
-      <CommandBar mode={mode} onModeChange={setMode} />
-      <AdminConnectionsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+    <div className="relative min-h-screen bg-black">
+      {workspace === "workflows" ? <WorkflowStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerWorkflowGuard} /> :
+        workspace === "social" ? <SocialStudio onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "characters" ? <CharacterStudio onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "companies" ? <CompanyLibrary onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "apis" ? <AdminConnectionsPanel onBack={() => navigateWorkspace("studio")} /> :
+          <div className="relative h-screen overflow-hidden">
+            {mode === "audio" ? <AudioStudio onModeChange={changeMode} /> : <>
+              {mode === "logo" ? <LogoResults /> : mode === "carousel" ? <CarouselResults /> : <ResultsGrid mode={mode} />}
+              <CommandBar mode={mode} onModeChange={changeMode} />
+            </>}
+          </div>}
+      <StudioNavigation workspace={workspace} onSelect={(destination) => { void selectNavigation(destination); }} />
       <UsagePanel open={usageOpen} onOpenChange={setUsageOpen} />
     </div>
   );

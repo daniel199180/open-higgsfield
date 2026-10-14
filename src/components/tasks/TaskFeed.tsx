@@ -21,7 +21,7 @@ export function TaskFeed({ mode, onReuse }: TaskFeedProps) {
   const { tasks: videoTasks } = useVideoTasks();
   const { tasks: imageTasks } = useImageTasks();
 
-  const [lightbox, setLightbox] = useState<{ images: string[]; index: number; modelId?: string; prompt?: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number; modelId?: string; prompt?: string; sourceTaskId?: string } | null>(null);
 
   const handleDeleteVideo = useCallback(async (id: string) => {
     await fetch(`/api/tasks/${id}`, { method: "DELETE" });
@@ -33,8 +33,8 @@ export function TaskFeed({ mode, onReuse }: TaskFeedProps) {
     revalidateImageTasks();
   }, []);
 
-  const openLightbox = useCallback((images: string[], index: number, modelId?: string, prompt?: string) => {
-    setLightbox({ images, index, modelId, prompt });
+  const openLightbox = useCallback((images: string[], index: number, modelId?: string, prompt?: string, sourceTaskId?: string) => {
+    setLightbox({ images, index, modelId, prompt, sourceTaskId });
   }, []);
 
   const closeLightbox = useCallback(() => setLightbox(null), []);
@@ -109,6 +109,7 @@ export function TaskFeed({ mode, onReuse }: TaskFeedProps) {
           index={lightbox.index}
           modelId={lightbox.modelId}
           prompt={lightbox.prompt}
+          sourceTaskId={lightbox.sourceTaskId}
           onClose={closeLightbox}
           onNext={nextImage}
           onPrev={prevImage}

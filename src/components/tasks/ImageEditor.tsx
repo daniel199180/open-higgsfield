@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- authenticated local image and user upload previews */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eraser, Expand, Eye, EyeOff, GripVertical, Hand, ImagePlus, Layers, Loader2, MessageCircle, Paintbrush, RotateCcw, Scissors, Sparkles, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eraser, Expand, Eye, EyeOff, GripVertical, Hand, ImagePlus, Layers, Loader2, MessageCircle, Paintbrush, RotateCcw, Scissors, Sparkles, Trash2, Type, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useImageTasks, revalidateImageTasks } from "@/hooks/useImageTasks";
 import { DEFAULT_OPENROUTER_EDIT_MODEL, OPENROUTER_EDIT_MODELS } from "@/lib/openrouter-edit-models";
 import { OUTPAINT_RATIOS, planOutpaint, type OutpaintPadding, type OutpaintSide, type OutpaintRatio } from "@/lib/image-outpaint";
@@ -11,11 +11,12 @@ import type { ImageLayerMetadata, ImageLayerSet } from "@/types";
 import { isLayerTask } from "@/lib/image-layer-task";
 
 interface Props { imageUrl?: string; taskId?: string; index?: number; prompt?: string; onClose: () => void; embedded?: boolean; onRequestImage?: () => void }
-type Tool = "prompt" | "mask" | "erase" | "comments" | "background" | "expand" | "layers";
+type Tool = "prompt" | "mask" | "erase" | "comments" | "background" | "expand" | "layers" | "text";
 type EditModel = { id: string; label: string; aspectRatios?: string[] };
 type Comment = { id: string; x: number; y: number; text: string };
 type Version = { id: string; url: string; label: string; prompt: string; index: number; parentId?: string };
 type LayerTransform = { x: number; y: number; scale: number };
+type TextLayer = { id: string; text: string; x: number; y: number; fontFamily: string; fontSize: number; fontWeight: number; color: string; align: "left" | "center" | "right"; visible: boolean };
 
 const EDIT_TOOLS = [
     { id: "prompt", label: "Imagen completa", icon: Sparkles },
@@ -25,7 +26,12 @@ const EDIT_TOOLS = [
     { id: "background", label: "Quitar fondo", icon: Scissors },
     { id: "expand", label: "Expandir bordes", icon: Expand },
     { id: "layers", label: "Separar en capas", icon: Layers },
+    { id: "text", label: "Texto", icon: Type },
 ] as const;
+
+const GOOGLE_FONT_FAMILIES = [
+    "Manrope", "Space Grotesk", "Inter", "Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Nunito", "Raleway", "Oswald", "Merriweather", "Playfair Display", "Source Sans 3", "DM Sans", "Work Sans", "Rubik", "Outfit", "Plus Jakarta Sans", "Figtree", "Bebas Neue", "Anton", "Archivo", "Barlow", "Bitter", "Cabin", "Caveat", "Cormorant Garamond", "Crimson Text", "Dancing Script", "EB Garamond", "Exo 2", "Fira Sans", "Fjalla One", "Heebo", "Josefin Sans", "Karla", "Libre Baskerville", "Libre Franklin", "Lora", "Maven Pro", "Merriweather Sans", "Mulish", "Noto Sans", "Noto Serif", "Pacifico", "Permanent Marker", "Quicksand", "Satisfy", "Signika", "Slabo 27px", "Spectral", "Teko", "Titillium Web", "Ubuntu", "Varela Round", "Vollkorn", "Yanone Kaffeesatz", "Yeseva One", "Zilla Slab",
+];
 
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 250;
@@ -76,6 +82,9 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
     const [layerVisibility, setLayerVisibility] = useState<Record<number, boolean>>({});
     const [layerOrder, setLayerOrder] = useState<number[]>([]);
     const [layerTransforms, setLayerTransforms] = useState<Record<number, LayerTransform>>({});
+    const [textLayers, setTextLayers] = useState<TextLayer[]>([]);
+    const [selectedTextLayerId, setSelectedTextLayerId] = useState("");
+    const [googleFontFamilies, setGoogleFontFamilies] = useState(GOOGLE_FONT_FAMILIES);
     const [skipLinkedLayers, setSkipLinkedLayers] = useState(false);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [zoom, setZoom] = useState(100);
@@ -95,6 +104,7 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
     const sourceImageRef = useRef<HTMLImageElement>(null);
     const layerCanvasRef = useRef<HTMLDivElement>(null);
     const layerDrag = useRef<{ pointerId: number; index: number; startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+    const textDrag = useRef<{ pointerId: number; id: string; startX: number; startY: number; initialX: number; initialY: number } | null>(null);
     const borderDrag = useRef<{ pointerId: number; side: OutpaintSide; startX: number; startY: number; initial: number; displayWidth: number; displayHeight: number } | null>(null);
     const inFlight = useRef(false);
     const { tasks } = useImageTasks();
@@ -106,8 +116,10 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
     const layerSet = layerTask?.reuse_state?.layer_set as ImageLayerSet | undefined;
     const layerImages = layerTask ? (layerTask.result_urls?.length ? layerTask.result_urls : (layerTask.result_paths ?? []).map((_, item) => `/api/download/${encodeURIComponent(layerTask.task_id)}?index=${item}`)) : [];
     function activeViewport() {
-        return tool === "layers" && layerTask && layerSet ? layerViewportRef.current : viewportRef.current;
+        return (tool === "layers" || tool === "text") && layerTask && layerSet ? layerViewportRef.current : viewportRef.current;
     }
+    const textStorageKey = currentTaskId ? `open-higgsfield:text-layers:${currentTaskId}:${currentIndex}` : "";
+    const selectedTextLayer = textLayers.find((item) => item.id === selectedTextLayerId);
     const orderedLayers = (layerSet?.layers ?? []).slice().sort((a, b) => {
         const ai = layerOrder.indexOf(a.index); const bi = layerOrder.indexOf(b.index);
         if (ai < 0 && bi < 0) return a.zIndex - b.zIndex;
@@ -196,6 +208,45 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
     useEffect(() => {
         if (layerTaskId) window.localStorage.setItem(`open-higgsfield:layer-transforms:${layerTaskId}`, JSON.stringify(layerTransforms));
     }, [layerTaskId, layerTransforms]);
+    useEffect(() => {
+        let active = true;
+        fetch("https://fonts.google.com/metadata/fonts", { cache: "force-cache" })
+            .then((response) => response.ok ? response.json() as Promise<{ familyMetadataList?: Array<{ family?: string }> }> : null)
+            .then((data) => {
+                if (!active || !data?.familyMetadataList) return;
+                const remote = data.familyMetadataList.map((item) => item.family).filter((family): family is string => typeof family === "string" && /^[\w .'-]+$/.test(family));
+                setGoogleFontFamilies([...new Set([...GOOGLE_FONT_FAMILIES, ...remote])].sort((a, b) => a.localeCompare(b)));
+            })
+            .catch(() => { /* The curated list remains available offline. */ });
+        return () => { active = false; };
+    }, []);
+    useEffect(() => {
+        if (!textStorageKey) { setTextLayers([]); setSelectedTextLayerId(""); return; }
+        try {
+            const parsed = JSON.parse(window.localStorage.getItem(textStorageKey) || "[]");
+            const rows = Array.isArray(parsed) ? parsed.filter((item): item is TextLayer => !!item && typeof item === "object" && typeof item.id === "string" && typeof item.text === "string") : [];
+            setTextLayers(rows.map((item) => ({
+                id: item.id, text: item.text.slice(0, 2000), x: Number.isFinite(item.x) ? Math.max(0, Math.min(100, item.x)) : 50, y: Number.isFinite(item.y) ? Math.max(0, Math.min(100, item.y)) : 50,
+                fontFamily: typeof item.fontFamily === "string" && item.fontFamily ? item.fontFamily : "Manrope", fontSize: Number.isFinite(item.fontSize) ? Math.max(8, Math.min(240, item.fontSize)) : 48,
+                fontWeight: Number.isFinite(item.fontWeight) ? Math.max(300, Math.min(900, item.fontWeight)) : 700, color: typeof item.color === "string" && /^#[0-9a-f]{6}$/i.test(item.color) ? item.color : "#ffffff",
+                align: item.align === "left" || item.align === "right" ? item.align : "center", visible: item.visible !== false,
+            })));
+            setSelectedTextLayerId("");
+        } catch { setTextLayers([]); setSelectedTextLayerId(""); }
+    }, [textStorageKey]);
+    useEffect(() => {
+        if (textStorageKey) window.localStorage.setItem(textStorageKey, JSON.stringify(textLayers));
+    }, [textStorageKey, textLayers]);
+    useEffect(() => {
+        const font = selectedTextLayer?.fontFamily;
+        if (!font || !/^[\w .'-]+$/.test(font)) return;
+        const family = font.trim().replace(/\s+/g, "+");
+        const id = `google-font-${family.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+        if (document.getElementById(id)) return;
+        const link = document.createElement("link"); link.id = id; link.rel = "stylesheet";
+        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:wght@300;400;500;600;700;800;900&display=swap`;
+        document.head.appendChild(link);
+    }, [selectedTextLayer?.fontFamily]);
 
     const versions = rootId ? tasks.filter((task) => !isLayerTask(task) && task.status === "COMPLETED" && task.reuse_state?.edit_root_task_id === rootId).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [];
     const originUrl = rootId ? `/api/download/${encodeURIComponent(rootId)}?index=${rootIndex}` : imageUrl;
@@ -421,7 +472,7 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
 
     function startLayerDrag(layer: ImageLayerMetadata, event: React.PointerEvent<HTMLDivElement>) {
         setSelectedLayerIndex(layer.index);
-        if (panMode) return;
+        if (panMode || tool !== "layers") return;
         event.stopPropagation();
         if (layer.index === layerSet?.baseIndex || busy) return;
         const transform = layerTransform(layer.index);
@@ -449,6 +500,50 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
             const next = { ...current };
             delete next[index];
             return next;
+        });
+    }
+
+    function updateTextLayer(id: string, patch: Partial<TextLayer>) {
+        setTextLayers((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+    }
+
+    function addTextLayer() {
+        if (!currentUrl) return;
+        const item: TextLayer = { id: crypto.randomUUID(), text: "Escribe aquí", x: 50, y: 50, fontFamily: "Manrope", fontSize: 54, fontWeight: 700, color: "#ffffff", align: "center", visible: true };
+        setTextLayers((current) => [...current, item]); setSelectedTextLayerId(item.id); setTool("text"); setPanMode(false); setError("");
+    }
+
+    function removeTextLayer(id: string) {
+        setTextLayers((current) => current.filter((item) => item.id !== id));
+        if (selectedTextLayerId === id) setSelectedTextLayerId("");
+    }
+
+    function startTextDrag(layer: TextLayer, event: React.PointerEvent<HTMLDivElement>) {
+        if (panMode || busy || !layer.visible || event.button !== 0) return;
+        event.preventDefault(); event.stopPropagation(); setSelectedTextLayerId(layer.id);
+        textDrag.current = { pointerId: event.pointerId, id: layer.id, startX: event.clientX, startY: event.clientY, initialX: layer.x, initialY: layer.y };
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    function moveTextDrag(event: React.PointerEvent<HTMLDivElement>) {
+        const drag = textDrag.current;
+        const canvas = layerCanvasRef.current ?? sourceImageRef.current?.parentElement;
+        if (!drag || !canvas || drag.pointerId !== event.pointerId) return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        updateTextLayer(drag.id, { x: Math.max(0, Math.min(100, drag.initialX + ((event.clientX - drag.startX) / rect.width) * 100)), y: Math.max(0, Math.min(100, drag.initialY + ((event.clientY - drag.startY) / rect.height) * 100)) });
+    }
+
+    function endTextDrag(event: React.PointerEvent<HTMLDivElement>) {
+        if (textDrag.current?.pointerId === event.pointerId) textDrag.current = null;
+    }
+
+    function renderTextLayers() {
+        return textLayers.filter((item) => item.visible).map((item) => {
+            const selected = selectedTextLayerId === item.id;
+            return <div key={item.id} role="button" tabIndex={0} aria-label={`Texto: ${item.text}`} onPointerDown={(event) => startTextDrag(item, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedTextLayerId(item.id); setTool("text"); setPanMode(false); } }} className={`absolute z-[40] max-w-[90%] select-none whitespace-pre-wrap border px-2 py-1 ${selected ? "border-[#ff4d4d] shadow-[0_0_0_1px_rgba(198,40,40,.65)]" : "border-transparent"} ${panMode ? "pointer-events-none" : "cursor-move"}`} style={{ left: `${item.x}%`, top: `${item.y}%`, transform: "translate(-50%, -50%)", color: item.color, fontFamily: `'${item.fontFamily.replace(/['"\\]/g, "")}', sans-serif`, fontSize: `${item.fontSize}px`, fontWeight: item.fontWeight, textAlign: item.align, lineHeight: 1.05 }}>
+                {item.text || "Texto"}{selected && <span className="pointer-events-none absolute -top-5 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">Texto · arrastra para mover</span>}
+            </div>;
         });
     }
 
@@ -552,21 +647,22 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
         finally { inFlight.current = false; setBusy(false); }
     }
 
-    return <div className={embedded ? "h-screen bg-black p-2 pt-16 text-white sm:p-4 sm:pt-16" : "fixed inset-0 z-[60] flex items-center justify-center bg-black/95 p-2 text-white sm:p-4"} {...(!embedded ? { role: "dialog", "aria-modal": true, "aria-label": "Editar imagen con IA" } : {})}>
-        <div className={`mx-auto flex w-full max-w-[1900px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl ${embedded ? "h-full" : "h-[98dvh] lg:h-[94dvh]"}`}>
+    return <div className={embedded ? "h-[100dvh] overflow-hidden bg-black p-2 pt-16 text-white sm:p-4 sm:pt-16" : "fixed inset-0 z-[60] flex items-center justify-center overflow-hidden bg-black/95 p-2 text-white sm:p-4"} {...(!embedded ? { role: "dialog", "aria-modal": true, "aria-label": "Editar imagen con IA" } : {})}>
+        <div className={`mx-auto flex h-full w-full max-w-[1900px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl`}>
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#111] px-4 py-3 sm:px-6">
                 <div className="flex min-w-0 items-center gap-2"><Sparkles className="h-5 w-5 shrink-0 text-[#ff4d4d]" /><div className="min-w-0"><h2 className="truncate text-sm font-bold sm:text-base">Editor de imágenes</h2><p className="hidden text-[11px] text-white/45 sm:block">Lienzo de versiones · selecciona cualquiera para seguir editando</p></div></div>
                 <div className="flex shrink-0 items-center gap-2">{onRequestImage && <button type="button" onClick={onRequestImage} disabled={busy} className="flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/5 disabled:opacity-45"><ImagePlus className="h-4 w-4" /><span className="hidden sm:inline">{currentUrl ? "Cambiar imagen" : "Agregar imagen"}</span></button>}<button type="button" onClick={onClose} aria-label={embedded ? "Volver al inicio" : "Cerrar editor"} className="flex items-center gap-2 rounded-lg p-2 text-sm text-white/70 hover:bg-white/10">{embedded ? <><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Inicio</span></> : <X className="h-5 w-5" />}</button></div>
             </header>
             <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
                 <main className="relative min-h-[240px] min-w-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_center,_#1c1c1c_0,_#0a0a0a_68%)]">
-                    {!currentUrl ? <div className="flex h-full items-center justify-center p-6"><div className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-dashed border-white/20 bg-[#141414]/90 px-6 py-12 text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-[#1b1b1b]"><ImagePlus className="h-8 w-8 text-[#ff4d4d]" /></div><h3 className="text-xl font-semibold">Tu lienzo está listo</h3><p className="mt-2 max-w-sm text-sm text-white/50">Agrega una imagen. La original y cada edición aparecerán juntas en este lienzo.</p>{onRequestImage ? <button type="button" onClick={onRequestImage} className="mt-6 rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Agregar imagen</button> : <label className="mt-6 cursor-pointer rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Subir imagen<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}</div></div> : <div ref={viewportRef} tabIndex={0} aria-label="Lienzo de versiones; usa la mano para arrastrar y Control o Comando con la rueda para hacer zoom" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClickCapture={(event) => { if (suppressCanvasClick.current) { event.preventDefault(); event.stopPropagation(); suppressCanvasClick.current = false; } }} className={`h-full w-full overflow-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${tool === "layers" && layerTask && layerSet ? "hidden" : ""} ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing [&_button]:cursor-grabbing" : "cursor-grab [&_button]:cursor-grab"}` : ""}`}><div className="flex min-h-[250%] min-w-[250%] w-max items-center justify-center gap-8 p-16 sm:gap-10" style={{ zoom: zoom / 100 }}>{visibleHistory.map((item, position) => {
+                    {!currentUrl ? <div className="flex h-full items-center justify-center p-6"><div className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-dashed border-white/20 bg-[#141414]/90 px-6 py-12 text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-[#1b1b1b]"><ImagePlus className="h-8 w-8 text-[#ff4d4d]" /></div><h3 className="text-xl font-semibold">Tu lienzo está listo</h3><p className="mt-2 max-w-sm text-sm text-white/50">Agrega una imagen. La original y cada edición aparecerán juntas en este lienzo.</p>{onRequestImage ? <button type="button" onClick={onRequestImage} className="mt-6 rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Agregar imagen</button> : <label className="mt-6 cursor-pointer rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Subir imagen<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}</div></div> : <div ref={viewportRef} tabIndex={0} aria-label="Lienzo de versiones; usa la mano para arrastrar y Control o Comando con la rueda para hacer zoom" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClickCapture={(event) => { if (suppressCanvasClick.current) { event.preventDefault(); event.stopPropagation(); suppressCanvasClick.current = false; } }} className={`h-full w-full overflow-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${(tool === "layers" || tool === "text") && layerTask && layerSet ? "hidden" : ""} ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing [&_button]:cursor-grabbing" : "cursor-grab [&_button]:cursor-grab"}` : ""}`}><div className="flex min-h-[250%] min-w-[250%] w-max items-center justify-center gap-8 p-16 sm:gap-10" style={{ zoom: zoom / 100 }}>{visibleHistory.map((item, position) => {
                         const selected = item.id === currentTaskId && item.index === currentIndex;
                         const expandingHere = selected && tool === "expand" && !panMode && dimensions.width > 0 && dimensions.height > 0;
-                        const image = <div className={`relative inline-block ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_2px_rgba(198,40,40,.28),0_0_24px_rgba(198,40,40,.18)]" : "border border-transparent"}`}>
+                        const image = <div onPointerMove={moveTextDrag} onPointerUp={endTextDrag} onPointerCancel={endTextDrag} className={`relative inline-block ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_2px_rgba(198,40,40,.28),0_0_24px_rgba(198,40,40,.18)]" : "border border-transparent"}`}>
                             {expandingHere && <div aria-label="Área nueva que se generará" className="pointer-events-none absolute z-0 border-2 border-dashed border-[#ff4d4d] bg-[#292929] bg-[linear-gradient(45deg,#393939_25%,transparent_25%),linear-gradient(-45deg,#393939_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#393939_75%),linear-gradient(-45deg,transparent_75%,#393939_75%)] bg-[length:18px_18px] shadow-[0_0_28px_rgba(255,77,77,.22)]" style={{ left: `${-outpaintPadding.left / dimensions.width * 100}%`, top: `${-outpaintPadding.top / dimensions.height * 100}%`, width: `${(dimensions.width + outpaintPadding.left + outpaintPadding.right) / dimensions.width * 100}%`, height: `${(dimensions.height + outpaintPadding.top + outpaintPadding.bottom) / dimensions.height * 100}%` }} />}
                             <img ref={selected ? sourceImageRef : undefined} key={`${item.id}:${item.index}`} src={item.url} alt={`${item.label} de la imagen`} draggable={false} onLoad={selected ? imageLoaded : undefined} className="relative z-10 block max-h-[min(74dvh,900px)] max-w-[min(76vw,560px)] object-contain shadow-2xl" />
                             {selected && <><canvas ref={overlayRef} className={`absolute inset-0 z-20 h-full w-full touch-none ${!panMode && (tool === "mask" || tool === "erase") ? "cursor-crosshair" : "pointer-events-none"}`} aria-label="Pinta la zona a editar o borrar" onPointerDown={(event) => { drawing.current = true; lastPoint.current = null; event.currentTarget.setPointerCapture(event.pointerId); draw(event); }} onPointerMove={draw} onPointerUp={() => { drawing.current = false; lastPoint.current = null; }} onPointerCancel={() => { drawing.current = false; lastPoint.current = null; }} /><div className={`absolute inset-0 z-20 ${!panMode && tool === "comments" ? "" : "pointer-events-none"}`}><button type="button" aria-label="Añadir comentario en esta posición" disabled={panMode || tool !== "comments" || comments.length >= 8} onClick={addComment} className={`absolute inset-0 h-full w-full ${!panMode && tool === "comments" ? "cursor-crosshair" : "pointer-events-none"}`} />{!panMode && tool === "comments" && comments.map((comment, noteIndex) => <button key={comment.id} type="button" title={comment.text || `Comentario ${noteIndex + 1}`} onClick={() => setSelectedComment(comment.id)} style={{ left: `${comment.x * 100}%`, top: `${comment.y * 100}%` }} className="pointer-events-auto absolute grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-[#c62828] text-xs font-bold text-white shadow-lg">{noteIndex + 1}</button>)}</div></>}
+                            {selected && renderTextLayers()}
                             {expandingHere && (["left", "right", "top", "bottom"] as OutpaintSide[]).map((side) => <button key={side} type="button" aria-label={`Estirar borde ${side === "left" ? "izquierdo" : side === "right" ? "derecho" : side === "top" ? "superior" : "inferior"}`} title={`Arrastra para expandir ${side === "left" ? "a la izquierda" : side === "right" ? "a la derecha" : side === "top" ? "hacia arriba" : "hacia abajo"}`} disabled={busy} onPointerDown={(event) => startBorderDrag(side, event)} onPointerMove={moveBorderDrag} onPointerUp={endBorderDrag} onPointerCancel={endBorderDrag} className={`absolute z-30 flex h-9 w-9 touch-none items-center justify-center rounded-full border-2 border-white bg-[#c62828] text-lg font-bold text-white shadow-lg hover:scale-110 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50 ${side === "left" || side === "right" ? "cursor-ew-resize" : "cursor-ns-resize"}`} style={{ left: side === "left" ? `${-outpaintPadding.left / dimensions.width * 100}%` : side === "right" ? `${(dimensions.width + outpaintPadding.right) / dimensions.width * 100}%` : "50%", top: side === "top" ? `${-outpaintPadding.top / dimensions.height * 100}%` : side === "bottom" ? `${(dimensions.height + outpaintPadding.bottom) / dimensions.height * 100}%` : "50%", transform: "translate(-50%, -50%)" }}>{side === "left" || side === "right" ? "↔" : "↕"}</button>)}
                         </div>;
                         return <article key={`${item.id}:${item.index}`} ref={selected ? activeCardRef : undefined} aria-label={`${item.label}, ${position + 1} de ${visibleHistory.length}${selected ? ", seleccionada" : ""}`} title={item.prompt || item.label} className="group/image relative shrink-0">
@@ -575,19 +671,22 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
                             <a href={`/api/download/${encodeURIComponent(item.id)}?index=${item.index}`} download title={`Descargar ${item.label}`} aria-label={`Descargar ${item.label}`} className="absolute bottom-3 right-3 rounded-lg bg-black/75 p-2 text-white opacity-0 shadow-lg transition-opacity hover:bg-black focus:opacity-100 group-hover/image:opacity-100 group-focus-within/image:opacity-100"><Download className="h-4 w-4" /></a>
                         </article>;
                     })}{busy && <div role="status" className="flex h-48 w-48 shrink-0 flex-col items-center justify-center gap-3 rounded-2xl bg-[#1d1111] text-center text-xs text-white/70"><Loader2 className="h-6 w-6 animate-spin text-[#ff4d4d]" />Generando nueva versión…</div>}</div></div>}
-                    {tool === "layers" && layerTask && layerSet && <div ref={layerViewportRef} tabIndex={0} aria-label="Mesa de trabajo de capas; selecciona y arrastra una capa" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} className={`absolute inset-0 z-[5] flex items-center justify-center overflow-auto bg-[#090909]/45 p-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing" : "cursor-grab"}` : ""}`}>
+                    {(tool === "layers" || tool === "text") && layerTask && layerSet && <div ref={layerViewportRef} tabIndex={0} aria-label="Mesa de trabajo de capas; selecciona y arrastra una capa" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} className={`absolute inset-0 z-[5] flex items-center justify-center overflow-auto bg-[#090909]/45 p-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing" : "cursor-grab"}` : ""}`}>
                         <div className="flex min-h-full min-w-full items-center justify-center" style={{ zoom: zoom / 100 }}>
-                            <div ref={layerCanvasRef} className="relative w-[min(78vw,820px)] max-w-full overflow-hidden border border-white/15 bg-[#101010] bg-[linear-gradient(45deg,#171717_25%,transparent_25%),linear-gradient(-45deg,#171717_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#171717_75%),linear-gradient(-45deg,transparent_75%,#171717_75%)] bg-[length:24px_24px] shadow-2xl" style={{ aspectRatio: `${Math.max(1, layerSet.sourceWidth)} / ${Math.max(1, layerSet.sourceHeight)}` }} onPointerMove={moveLayerDrag} onPointerUp={endLayerDrag} onPointerCancel={endLayerDrag} aria-label="Lienzo editable de capas">
+                            <div ref={layerCanvasRef} className="relative w-[min(78vw,820px)] max-w-full overflow-hidden border border-white/15 bg-[#101010] bg-[linear-gradient(45deg,#171717_25%,transparent_25%),linear-gradient(-45deg,#171717_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#171717_75%),linear-gradient(-45deg,transparent_75%,#171717_75%)] bg-[length:24px_24px] shadow-2xl" style={{ aspectRatio: `${Math.max(1, layerSet.sourceWidth)} / ${Math.max(1, layerSet.sourceHeight)}` }} onPointerMove={(event) => { moveLayerDrag(event); moveTextDrag(event); }} onPointerUp={(event) => { endLayerDrag(event); endTextDrag(event); }} onPointerCancel={(event) => { endLayerDrag(event); endTextDrag(event); }} aria-label="Lienzo editable de capas">
                                 {orderedLayers.map((layer, orderIndex) => {
                                     const transform = layerTransform(layer.index);
                                     const selected = selectedLayerIndex === layer.index;
                                     const [left, top, right, bottom] = layer.boundingBox.normalized;
                                     if (!layerImages[layer.index] || layerVisibility[layer.index] === false) return null;
-                                    return <div key={`workbench-layer-${layer.index}`} role="button" tabIndex={0} aria-label={`Seleccionar ${layer.name}`} onPointerDown={(event) => startLayerDrag(layer, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLayerIndex(layer.index); } }} className={`absolute select-none ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_1px_rgba(198,40,40,.65)]" : "border border-transparent"} ${layer.index === layerSet.baseIndex ? "cursor-default" : panMode ? "cursor-grab" : "cursor-move"}`} style={{ left: `${left / 10}%`, top: `${top / 10}%`, width: `${Math.max(1, (right - left) / 10)}%`, height: `${Math.max(1, (bottom - top) / 10)}%`, transform: `translate(${transform.x}%, ${transform.y}%) scale(${transform.scale})`, transformOrigin: "center", zIndex: orderIndex + 1 }}>
-                                        <img src={layerImages[layer.index]} alt={layer.name} draggable={false} className="pointer-events-none h-full w-full object-contain" />
-                                        {selected && <span className="pointer-events-none absolute -top-6 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">{layer.name}{layer.index === layerSet.baseIndex ? " · bloqueada" : ""}</span>}
+                                    return <div key={`workbench-layer-${layer.index}`} className="pointer-events-none absolute inset-0 select-none" style={{ transform: `translate(${transform.x}%, ${transform.y}%) scale(${transform.scale})`, transformOrigin: "center", zIndex: orderIndex + 1 }}>
+                                        <img src={layerImages[layer.index]} alt={layer.name} draggable={false} className="pointer-events-none absolute inset-0 h-full w-full object-fill" />
+                                        <div role="button" tabIndex={0} aria-label={`Seleccionar ${layer.name}`} onPointerDown={(event) => startLayerDrag(layer, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLayerIndex(layer.index); } }} className={`pointer-events-auto absolute ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_1px_rgba(198,40,40,.65)]" : "border border-transparent"} ${layer.index === layerSet.baseIndex ? "cursor-default" : panMode ? "cursor-grab" : "cursor-move"}`} style={{ left: `${left / 10}%`, top: `${top / 10}%`, width: `${Math.max(1, (right - left) / 10)}%`, height: `${Math.max(1, (bottom - top) / 10)}%` }}>
+                                            {selected && <span className="pointer-events-none absolute -top-6 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">{layer.name}{layer.index === layerSet.baseIndex ? " · bloqueada" : ""}</span>}
+                                        </div>
                                     </div>;
                                 })}
+                                {renderTextLayers()}
                             </div>
                         </div>
                     </div>}
@@ -605,18 +704,22 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, onClose,
                             <p className="text-xs text-white/40">Necesita una conexión activa de APIMart. La salida se guarda localmente porque los enlaces del proveedor caducan.</p>
                         </> : <>
                             <div className="rounded-xl border border-white/10 bg-[#0c0c0c] p-3 text-xs text-white/65"><p className="font-semibold text-white">{layerSet?.layers.length ?? 0} capas disponibles</p><p className="mt-1 text-white/40">Haz clic en una capa de la mesa para seleccionarla y arrástrala para moverla. La base queda bloqueada; usa la escala y el orden desde este panel.</p></div>
-                            <div className="relative aspect-[4/3] overflow-hidden rounded-xl border border-white/10 bg-[#090909]" aria-label="Vista compuesta de capas">
+                            <div className="relative max-h-40 overflow-hidden border border-white/10 bg-[#090909]" style={{ aspectRatio: `${Math.max(1, layerSet?.sourceWidth ?? 1)} / ${Math.max(1, layerSet?.sourceHeight ?? 1)}` }} aria-label="Vista compuesta de capas">
                                 {orderedLayers.map((layer: ImageLayerMetadata, orderIndex) => {
                                     if (layerVisibility[layer.index] === false || !layerImages[layer.index]) return null;
-                                    const [left, top, right, bottom] = layer.boundingBox.normalized;
                                     const transform = layerTransform(layer.index);
-                                    return <img key={`preview-${layer.index}`} src={layerImages[layer.index]} alt="" className="absolute object-contain" style={{ left: `${left / 10}%`, top: `${top / 10}%`, width: `${Math.max(1, (right - left) / 10)}%`, height: `${Math.max(1, (bottom - top) / 10)}%`, zIndex: orderIndex, transform: `translate(${transform.x}%, ${transform.y}%) scale(${transform.scale})`, transformOrigin: "center" }} />;
+                                    return <img key={`preview-${layer.index}`} src={layerImages[layer.index]} alt="" className="absolute inset-0 h-full w-full object-fill" style={{ zIndex: orderIndex, transform: `translate(${transform.x}%, ${transform.y}%) scale(${transform.scale})`, transformOrigin: "center" }} />;
                                 })}
                             </div>
-                            <div className="space-y-2"><div className="flex items-center justify-between px-1 text-[10px] uppercase tracking-wider text-white/35"><span>Pila de capas</span><span>Arriba = frente</span></div>{orderedLayers.slice().reverse().map((layer: ImageLayerMetadata, rowIndex) => { const visible = layerVisibility[layer.index] !== false; const topmost = rowIndex === 0; const bottommost = rowIndex === orderedLayers.length - 1; return <div key={layer.index} className={`flex items-center gap-1 rounded-xl border p-2 ${selectedLayerIndex === layer.index ? "border-[#ff4d4d]/70 bg-[#251010]" : "border-white/10"}`}><GripVertical className="h-4 w-4 shrink-0 text-white/25" aria-hidden="true" /><button type="button" onClick={() => setSelectedLayerIndex(layer.index)} className="flex min-w-0 flex-1 items-center gap-2 text-left"><img src={layerImages[layer.index]} alt={layer.name} className="h-12 w-12 rounded-lg bg-[#090909] object-contain" /><span className="min-w-0"><strong className="block truncate text-xs text-white">{layer.name}</strong><span className="block truncate text-[11px] text-white/40">{layer.index === 0 ? "Base" : layer.description || "Capa transparente"}</span></span></button><div className="flex shrink-0 items-center"><button type="button" aria-label={`Subir ${layer.name}`} title="Subir capa" disabled={topmost || busy} onClick={() => moveLayer(layer.index, 1)} className="rounded-lg p-1.5 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-4 w-4" /></button><button type="button" aria-label={`Bajar ${layer.name}`} title="Bajar capa" disabled={bottommost || busy} onClick={() => moveLayer(layer.index, -1)} className="rounded-lg p-1.5 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-4 w-4" /></button><button type="button" aria-label={visible ? `Ocultar ${layer.name}` : `Mostrar ${layer.name}`} title={visible ? "Ocultar capa" : "Mostrar capa"} onClick={() => setLayerVisibility((current) => ({ ...current, [layer.index]: !visible }))} className="rounded-lg p-1.5 text-white/60 hover:bg-white/10 hover:text-white">{visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}</button><a href={layerImages[layer.index]} download aria-label={`Descargar ${layer.name}`} className="rounded-lg p-1.5 text-white/60 hover:bg-white/10 hover:text-white"><Download className="h-4 w-4" /></a></div></div>; })}</div>
+                            <div className="min-h-0 space-y-2"><div className="flex items-center justify-between px-1 text-[10px] uppercase tracking-wider text-white/35"><span>Pila de capas</span><span>Arriba = frente</span></div><div className="max-h-[min(36dvh,330px)] space-y-1.5 overflow-y-auto overscroll-contain pr-1">{orderedLayers.slice().reverse().map((layer: ImageLayerMetadata, rowIndex) => { const visible = layerVisibility[layer.index] !== false; const topmost = rowIndex === 0; const bottommost = rowIndex === orderedLayers.length - 1; return <div key={layer.index} className={`flex items-center gap-1 rounded-lg border p-1.5 ${selectedLayerIndex === layer.index ? "border-[#ff4d4d]/70 bg-[#251010]" : "border-white/10"}`}><GripVertical className="h-3.5 w-3.5 shrink-0 text-white/25" aria-hidden="true" /><button type="button" onClick={() => setSelectedLayerIndex(layer.index)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left"><img src={layerImages[layer.index]} alt={layer.name} className="h-8 w-8 shrink-0 bg-[#090909] object-contain" /><span className="min-w-0"><strong className="block truncate text-[11px] text-white">{layer.name}</strong><span className="block truncate text-[10px] text-white/40">{layer.index === 0 ? "Referencia original" : layer.description || "Capa transparente"}</span></span></button><div className="flex shrink-0 items-center"><button type="button" aria-label={`Subir ${layer.name}`} title="Subir capa" disabled={topmost || busy} onClick={() => moveLayer(layer.index, 1)} className="rounded-md p-1 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button><button type="button" aria-label={`Bajar ${layer.name}`} title="Bajar capa" disabled={bottommost || busy} onClick={() => moveLayer(layer.index, -1)} className="rounded-md p-1 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button><button type="button" aria-label={visible ? `Ocultar ${layer.name}` : `Mostrar ${layer.name}`} title={visible ? "Ocultar capa" : "Mostrar capa"} onClick={() => setLayerVisibility((current) => ({ ...current, [layer.index]: !visible }))} className="rounded-md p-1 text-white/60 hover:bg-white/10 hover:text-white">{visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}</button><a href={layerImages[layer.index]} download aria-label={`Descargar ${layer.name}`} className="rounded-md p-1 text-white/60 hover:bg-white/10 hover:text-white"><Download className="h-3.5 w-3.5" /></a></div></div>; })}</div></div>
                             {selectedLayerIndex > 0 && <><label className="block rounded-xl border border-white/10 p-3 text-xs font-semibold text-white/70">Escala de la capa<input type="range" min="0.5" max="2" step="0.05" value={layerTransform(selectedLayerIndex).scale} onChange={(event) => setLayerTransforms((current) => ({ ...current, [selectedLayerIndex]: { ...layerTransform(selectedLayerIndex), scale: Number(event.target.value) } }))} disabled={busy} className="mt-3 w-full accent-[#c62828]" /><span className="mt-1 block text-right text-[11px] font-normal text-white/45">{Math.round(layerTransform(selectedLayerIndex).scale * 100)}%</span><button type="button" onClick={() => resetLayerTransform(selectedLayerIndex)} disabled={busy} className="mt-2 text-[11px] font-normal text-white/60 underline hover:text-white">Restablecer posición y escala</button></label><label className="block text-xs font-semibold text-white/70">Editar capa seleccionada<textarea value={layerEditPrompt} onChange={(event) => setLayerEditPrompt(event.target.value)} disabled={busy} maxLength={3000} rows={3} placeholder="Ej. Cambia el color de la chaqueta a rojo" className="mt-2 w-full resize-y rounded-xl border border-white/15 bg-[#191919] p-3 text-sm text-white outline-none focus:border-[#ff4d4d]" /></label><button type="button" disabled={busy || !layerEditPrompt.trim()} onClick={() => void editLayer()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{busy ? "Editando capa…" : "Generar cambio en la capa"}</button></>}
                             <button type="button" onClick={() => { setSkipLinkedLayers(true); setLayerTaskId(""); setLayerEditPrompt(""); }} disabled={busy} className="text-xs text-white/60 underline hover:text-white">Separar otra vez esta imagen</button>
                         </>}
+                    </section> : tool === "text" ? <section className="mt-6 space-y-4">
+                        <p className="text-xs leading-relaxed text-white/55">Añade títulos, llamadas y etiquetas directamente sobre la imagen. Selecciona el texto en el lienzo y arrástralo para ubicarlo.</p>
+                        <button type="button" onClick={addTextLayer} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#c62828] px-4 py-3 text-sm font-bold text-white hover:bg-[#a92121] disabled:opacity-45"><Type className="h-4 w-4" />Agregar texto</button>
+                        {textLayers.length > 0 && <div className="space-y-1.5"><p className="px-1 text-[10px] uppercase tracking-wider text-white/35">Capas de texto</p>{textLayers.map((item) => <div key={item.id} className={`flex items-center gap-2 rounded-lg border p-2 ${selectedTextLayerId === item.id ? "border-[#ff4d4d]/70 bg-[#251010]" : "border-white/10"}`}><button type="button" onClick={() => { setSelectedTextLayerId(item.id); setPanMode(false); }} className="min-w-0 flex-1 truncate text-left text-xs text-white">{item.text || "Texto vacío"}</button><button type="button" title={item.visible ? "Ocultar texto" : "Mostrar texto"} aria-label={item.visible ? `Ocultar ${item.text}` : `Mostrar ${item.text}`} onClick={() => updateTextLayer(item.id, { visible: !item.visible })} className="rounded-md p-1 text-white/60 hover:bg-white/10">{item.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}</button><button type="button" title="Eliminar texto" aria-label={`Eliminar ${item.text}`} onClick={() => removeTextLayer(item.id)} className="rounded-md p-1 text-white/60 hover:bg-white/10 hover:text-red-300"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div>}
+                        {selectedTextLayer && <div className="space-y-3 rounded-xl border border-white/10 p-3"><label className="block text-xs font-semibold text-white/70">Contenido<textarea value={selectedTextLayer.text} onChange={(event) => updateTextLayer(selectedTextLayer.id, { text: event.target.value.slice(0, 2000) })} rows={3} maxLength={2000} className="mt-2 w-full resize-y rounded-lg border border-white/15 bg-[#191919] p-2.5 text-sm text-white outline-none focus:border-[#ff4d4d]" /></label><label className="block text-xs font-semibold text-white/70">Fuente de Google Fonts<input list="google-font-families" value={selectedTextLayer.fontFamily} onChange={(event) => updateTextLayer(selectedTextLayer.id, { fontFamily: event.target.value })} className="mt-2 w-full rounded-lg border border-white/15 bg-[#191919] p-2.5 text-sm text-white outline-none focus:border-[#ff4d4d]" /><datalist id="google-font-families">{googleFontFamilies.map((font) => <option key={font} value={font} />)}</datalist><span className="mt-1 block text-[10px] font-normal text-white/40">Escribe cualquier familia disponible en Google Fonts para cargarla en el lienzo.</span></label><div className="grid grid-cols-2 gap-2"><label className="text-xs font-semibold text-white/70">Tamaño<input type="number" min={8} max={240} value={selectedTextLayer.fontSize} onChange={(event) => updateTextLayer(selectedTextLayer.id, { fontSize: Math.max(8, Math.min(240, Number(event.target.value) || 8)) })} className="mt-2 w-full rounded-lg border border-white/15 bg-[#191919] p-2.5 text-sm text-white" /></label><label className="text-xs font-semibold text-white/70">Peso<select value={selectedTextLayer.fontWeight} onChange={(event) => updateTextLayer(selectedTextLayer.id, { fontWeight: Number(event.target.value) })} className="mt-2 w-full rounded-lg border border-white/15 bg-[#191919] p-2.5 text-sm text-white"><option value={300}>Ligero</option><option value={400}>Regular</option><option value={500}>Medio</option><option value={600}>Seminegrita</option><option value={700}>Negrita</option><option value={800}>Extra negrita</option><option value={900}>Negro</option></select></label></div><div className="grid grid-cols-[1fr_auto] items-end gap-2"><label className="text-xs font-semibold text-white/70">Alineación<select value={selectedTextLayer.align} onChange={(event) => updateTextLayer(selectedTextLayer.id, { align: event.target.value as TextLayer["align"] })} className="mt-2 w-full rounded-lg border border-white/15 bg-[#191919] p-2.5 text-sm text-white"><option value="left">Izquierda</option><option value="center">Centro</option><option value="right">Derecha</option></select></label><label className="text-xs font-semibold text-white/70">Color<input type="color" value={selectedTextLayer.color} onChange={(event) => updateTextLayer(selectedTextLayer.id, { color: event.target.value })} className="mt-2 h-10 w-14 cursor-pointer rounded-lg border border-white/15 bg-[#191919] p-1" /></label></div><button type="button" onClick={() => removeTextLayer(selectedTextLayer.id)} className="flex items-center gap-2 text-xs text-white/60 hover:text-red-300"><Trash2 className="h-3.5 w-3.5" />Eliminar capa de texto</button></div>}
                     </section> : tool === "expand" ? <div className="mt-6 space-y-5">
                         <p className="text-xs leading-relaxed text-white/55">Arrastra los tiradores de uno o varios bordes de la imagen. El área cuadriculada que ves en el lienzo será generada por IA; la imagen original no se recortará.</p>
                         {outpaintPlan ? <div className="rounded-xl border border-white/10 bg-[#0c0c0c] p-3 text-xs text-white/65"><p className="font-semibold text-white">Área final: {outpaintPlan.target.width} × {outpaintPlan.target.height} px</p><p className="mt-1">Izquierda {outpaintPadding.left} · Derecha {outpaintPadding.right} · Arriba {outpaintPadding.top} · Abajo {outpaintPadding.bottom} px</p><p className="mt-1 text-white/40">Formato compatible del modelo: {outpaintPlan.ratio}. El sobrante se recortará fuera del área marcada.</p></div> : <p className="rounded-xl border border-dashed border-white/15 p-3 text-xs text-white/50">Arrastra un borde para marcar el área nueva.</p>}

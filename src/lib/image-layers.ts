@@ -154,6 +154,41 @@ async function imageBuffer(url: string): Promise<Buffer> {
     catch { throw new ImageLayerError("No se pudo guardar una de las capas devueltas por APIMart.", 502); }
 }
 
+function clampInt(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+/**
+ * APIMart may return either a full-canvas transparent PNG or a cropped layer.
+ * The editor needs a common canvas for every layer; otherwise each crop is
+ * positioned as if it were the whole image and the original composition is
+ * lost. Normalize cropped outputs into the source canvas using the provider's
+ * bounding box while preserving full-canvas outputs unchanged.
+ */
+async function alignLayerToCanvas(buffer: Buffer, layer: ImageLayerMetadata, sourceWidth: number, sourceHeight: number): Promise<Buffer> {
+    const metadata = await sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).metadata();
+    const width = metadata.width ?? sourceWidth;
+    const height = metadata.height ?? sourceHeight;
+    if (width === sourceWidth && height === sourceHeight) return sharp(buffer).png().toBuffer();
+
+    const [rawLeft, rawTop, rawRight, rawBottom] = layer.boundingBox.absolute;
+    const left = clampInt(rawLeft, 0, Math.max(0, sourceWidth - 1));
+    const top = clampInt(rawTop, 0, Math.max(0, sourceHeight - 1));
+    const right = clampInt(rawRight, left + 1, sourceWidth);
+    const bottom = clampInt(rawBottom, top + 1, sourceHeight);
+    const targetWidth = Math.max(1, right - left);
+    const targetHeight = Math.max(1, bottom - top);
+    const resized = await sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).resize(targetWidth, targetHeight, { fit: "fill" }).png().toBuffer();
+    return sharp({
+        create: {
+            width: sourceWidth,
+            height: sourceHeight,
+            channels: 4,
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+        },
+    }).composite([{ input: resized, left, top }]).png().toBuffer();
+}
+
 async function poll(connection: ProviderConnection, providerTaskId: string, sourceWidth: number, sourceHeight: number): Promise<{ urls: string[]; layers: ImageLayerMetadata[] }> {
     const started = Date.now();
     for (;;) {
@@ -209,8 +244,25 @@ export async function decomposeImage(taskIdValue: string, index: number, prompt:
     let parsed = providerTaskId ? await poll(connection, providerTaskId, source.width, source.height) : parseLayerDecomposition(payload, source.width, source.height);
     if (!parsed) throw new ImageLayerError("APIMart no devolvió capas válidas.", 502);
     parsed = { ...parsed, layers: parseLayerDecomposition({ result: { url: parsed.urls, layers: parsed.layers } }, source.width, source.height)!.layers };
-    const buffers = await Promise.all(parsed.urls.map(imageBuffer));
-    const saved = await persistLayerTask({ sourceTask: source.task, parentTaskId: taskIdValue, parentIndex: index, prompt, connectionId: connection.id, layerSet: layerSet(source.width, source.height, parsed), buffers, mode: "layer-decomposition" });
+    const providerBuffers = await Promise.all(parsed.urls.map(imageBuffer));
+    const providerLayers = parsed.layers.map((layer, providerIndex) => ({
+        ...layer,
+        index: providerIndex + 1,
+        zIndex: layer.zIndex + 1,
+        name: layer.name === "Imagen base" ? "Base separada" : layer.name,
+    }));
+    const alignedProviderBuffers = await Promise.all(providerBuffers.map((buffer, providerIndex) => alignLayerToCanvas(buffer, providerLayers[providerIndex], source.width, source.height)));
+    const referenceLayer: ImageLayerMetadata = {
+        index: 0,
+        zIndex: 0,
+        name: "Referencia original",
+        description: "Imagen inicial conservada como referencia y capa bloqueada.",
+        size: { width: source.width, height: source.height },
+        boundingBox: { absolute: [0, 0, source.width, source.height], normalized: [0, 0, 1000, 1000] },
+    };
+    const normalizedLayers = [referenceLayer, ...providerLayers];
+    const normalizedSet: ImageLayerSet = { ...layerSet(source.width, source.height, { layers: normalizedLayers }), baseIndex: 0 };
+    const saved = await persistLayerTask({ sourceTask: source.task, parentTaskId: taskIdValue, parentIndex: index, prompt, connectionId: connection.id, layerSet: normalizedSet, buffers: [source.png, ...alignedProviderBuffers], mode: "layer-decomposition" });
     return { taskId: saved.task.task_id, imageUrl: saved.imageUrl, layers: (saved.task.reuse_state?.layer_set as ImageLayerSet).layers };
 }
 
@@ -229,7 +281,7 @@ export async function editImageLayer(layerTaskId: string, layerIndex: number, pr
     const providerTaskId = taskId(payload);
     const parsed = providerTaskId ? await poll(connection, providerTaskId, layerSet.sourceWidth, layerSet.sourceHeight) : parseLayerDecomposition(payload, layerSet.sourceWidth, layerSet.sourceHeight);
     if (!parsed?.urls[0]) throw new ImageLayerError("APIMart no devolvió la capa editada.", 502);
-    const edited = await imageBuffer(parsed.urls[0]);
+    const edited = await alignLayerToCanvas(await imageBuffer(parsed.urls[0]), layerSet.layers[layerIndex], layerSet.sourceWidth, layerSet.sourceHeight);
     const buffers = await Promise.all((parent.result_paths ?? []).map((file, index) => index === layerIndex ? edited : fs.readFile(file)));
     const nextSet: ImageLayerSet = { ...layerSet, layers: layerSet.layers.map((item) => item.index === layerIndex ? { ...item, description: prompt.trim().slice(0, 400) } : item) };
     const saved = await persistLayerTask({ sourceTask: parent as ImageTask, parentTaskId: layerTaskId, parentIndex: 0, prompt, connectionId: connection.id, layerSet: nextSet, buffers, mode: "layer-edit" });

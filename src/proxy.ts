@@ -21,8 +21,8 @@ export default async function proxy(request: NextRequest) {
     const policy = [
         "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'", "form-action 'self'",
         `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : ""}`,
-        "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "media-src 'self' blob: https:",
-        "font-src 'self'", `connect-src 'self' https:${process.env.NODE_ENV !== "production" ? " ws: wss:" : ""}`,
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "img-src 'self' data: blob: https:", "media-src 'self' blob: https:",
+        "font-src 'self' https://fonts.gstatic.com", `connect-src 'self' https:${process.env.NODE_ENV !== "production" ? " ws: wss:" : ""}`,
     ].join("; ");
     const headers = new Headers(request.headers);
     headers.set("x-nonce", nonce);

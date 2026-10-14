@@ -10,6 +10,7 @@ import { AudioStudio } from "@/components/studio/AudioStudio";
 import { ImageEditingStudio } from "@/components/studio/ImageEditingStudio";
 import { CharacterStudio } from "@/components/characters/CharacterStudio";
 import { CompanyLibrary } from "@/components/studio/CompanyLibrary";
+import { PromptLibraryStudio } from "@/components/prompts/PromptLibraryStudio";
 import type { StudioMode } from "@/components/studio/StudioModePill";
 import { AdminConnectionsPanel } from "@/components/studio/AdminConnectionsPanel";
 import { mergeRuntimeCatalog } from "@/lib/runtime-catalog";
@@ -23,11 +24,11 @@ const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").th
 export function StudioShell() {
   const [mode, setMode] = useState<StudioMode>("image");
   const [usageOpen, setUsageOpen] = useState(false);
-  const [workspace, setWorkspace] = useState<"studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "apis">("studio");
+  const [workspace, setWorkspace] = useState<"studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis">("studio");
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const beforeLeaveWorkflow = useRef<(() => Promise<boolean>) | null>(null);
   const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
-  const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "apis") => {
+  const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
     setWorkspace(next);
     const url = new URL(window.location.href);
     if (next === "studio") url.searchParams.delete("workspace");
@@ -35,7 +36,7 @@ export function StudioShell() {
     if (next !== "workflows") { url.searchParams.delete("workflow"); url.searchParams.delete("run"); }
     window.history.replaceState(null, "", url);
   }, []);
-  const selectNavigation = useCallback(async (destination: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "usage" | "apis") => {
+  const selectNavigation = useCallback(async (destination: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "usage" | "apis") => {
     if (destination === "usage") { setUsageOpen(true); return; }
     if (destination === workspace) return;
     if (workspace === "workflows" && beforeLeaveWorkflow.current && !await beforeLeaveWorkflow.current()) return;
@@ -69,7 +70,7 @@ export function StudioShell() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const requestedWorkspace = new URLSearchParams(window.location.search).get("workspace");
-      if (requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
+      if (requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "prompts" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
       const requestedMode = new URLSearchParams(window.location.search).get("mode");
       if (requestedMode === "carousel" || requestedMode === "logo" || requestedMode === "audio") setMode(requestedMode);
       void checkSession();
@@ -104,6 +105,17 @@ export function StudioShell() {
   }, [selectNavigation]);
 
   useEffect(() => {
+    const openPrompt = (event: Event) => {
+      const prompt = (event as CustomEvent<{ prompt?: string }>).detail?.prompt;
+      if (!prompt) return;
+      navigateWorkspace("studio");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("open-higgsfield:prompt-selected", { detail: { prompt } })), 0);
+    };
+    window.addEventListener("open-higgsfield:use-prompt", openPrompt);
+    return () => window.removeEventListener("open-higgsfield:use-prompt", openPrompt);
+  }, [navigateWorkspace]);
+
+  useEffect(() => {
     if (!authenticated) return;
     window.addEventListener("focus", checkSession);
     window.addEventListener("open-higgsfield:auth-updated", checkSession);
@@ -128,6 +140,7 @@ export function StudioShell() {
         workspace === "social" ? <SocialStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "characters" ? <CharacterStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "companies" ? <CompanyLibrary onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "prompts" ? <PromptLibraryStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "apis" ? <AdminConnectionsPanel onBack={() => navigateWorkspace("studio")} /> :
           <div className="relative h-screen overflow-hidden">

@@ -58,3 +58,8 @@ export function getImageAspectRatios(caps: ImageModelCapability): [string, strin
         ? (caps.aspect_ratio.options?.map(([label, value]) => [value, label]) ?? [])
         : [];
 }
+
+/** A format is mandatory only when the upstream model explicitly exposes it. */
+export function requiresImageAspectRatio(caps: ImageModelCapability): boolean {
+    return getImageAspectRatios(caps).length > 0;
+}

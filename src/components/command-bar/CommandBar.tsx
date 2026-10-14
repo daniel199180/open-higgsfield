@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
-import { getEditVariant, getImageAspectRatios } from "@/models/capabilities/image-helpers";
+import { getEditVariant, getImageAspectRatios, requiresImageAspectRatio } from "@/models/capabilities/image-helpers";
 import { getVideoOverrides, getDurations, getAspectRatios, hasAttachments as videoHasAttachments } from "@/models/capabilities/video-helpers";
 import type { AttachmentRole } from "@/models/capabilities/video-helpers";
 import type { MediaSlotCapability } from "@/models/capabilities/types";
@@ -197,6 +197,17 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
         el.style.height = "auto";
         el.style.height = `${el.scrollHeight}px`;
     }, []);
+
+    useEffect(() => {
+        const applySavedPrompt = (event: Event) => {
+            const value = (event as CustomEvent<{ prompt?: string }>).detail?.prompt;
+            if (!value) return;
+            setValue("prompt", value);
+            window.setTimeout(autoResize, 0);
+        };
+        window.addEventListener("open-higgsfield:prompt-selected", applySavedPrompt);
+        return () => window.removeEventListener("open-higgsfield:prompt-selected", applySavedPrompt);
+    }, [autoResize, setValue]);
 
     // ── Models ──
     const videoModel = VIDEO_CAPABILITIES[videoModelId] ?? VIDEO_CAPABILITIES[firstVideoId];
@@ -433,6 +444,9 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
         setSlotFiles((current) => remapSlotFilesOnModelSwitch(current, previousSlots, nextSlots));
 
         setImageModelId(id);
+        // An error from the previous model must not survive a capability change.
+        setApiError(null);
+        setApiErrorDetail(null);
         const aspectOptions = getImageAspectRatios(nextModel).map(([value]) => value);
         setSelectedImageFormats((current) => {
             const supported = current.filter((ratio) => aspectOptions.includes(ratio));
@@ -641,7 +655,10 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             setApiError("ERR_GENERIC");
             return;
         }
-        if (mode !== "video" && !sizeAspect) {
+        // Some catalogued image models deliberately expose no aspect-ratio
+        // parameter. They must use the provider's own default instead of being
+        // blocked by a client-side requirement that cannot be fulfilled.
+        if (mode !== "video" && requiresImageAspectRatio(imageModel) && !sizeAspect) {
             setApiErrorDetail(null);
             setApiError("ERR_IMAGE_ASPECT_RATIO_REQUIRED");
             return;
@@ -1080,6 +1097,9 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                                             fieldValues={imageFieldValues}
                                             onFieldChange={(id, val) => setImageFieldValues((prev) => ({ ...prev, [id]: val }))}
                                         />
+                                    )}
+                                    {imageRatios.length === 0 && (
+                                        <span title="Este modelo no publica formatos seleccionables; generará con su formato predeterminado." className="inline-flex items-center rounded-full border border-white/10 bg-white/[.035] px-3 py-2 text-xs font-medium text-white/55">Formato automático</span>
                                     )}
                                     {imageResolutions.length > 0 && (
                                         <ResolutionPill

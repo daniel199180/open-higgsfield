@@ -3,7 +3,7 @@ import { generationEndpoint } from "@/lib/generation-request";
 import { toJpeg } from "@/lib/media-upload";
 import { NextRequest, NextResponse } from "next/server";
 import { getImageAdapter } from "@/models/adapters/image";
-import { getImageAspectRatios } from "@/models/capabilities/image-helpers";
+import { getImageAspectRatios, requiresImageAspectRatio } from "@/models/capabilities/image-helpers";
 import { findCapability } from "@/providers/catalog";
 import type { ImageModelCapability } from "@/models/capabilities/image";
 import { saveInputLocally } from "@/lib/upload";
@@ -91,10 +91,10 @@ async function generate(req: NextRequest) {
 
   const requestedAspect = String(form.get("size_aspect") ?? "").trim();
   const supportedAspects = getImageAspectRatios(imageCaps).map(([value]) => value);
-  if (supportedAspects.length > 0 && !requestedAspect) {
+  if (requiresImageAspectRatio(imageCaps) && !requestedAspect) {
     return NextResponse.json({ error: "ERR_IMAGE_ASPECT_RATIO_REQUIRED" }, { status: 400 });
   }
-  if (requestedAspect && supportedAspects.length > 0 && !supportedAspects.includes(requestedAspect)) {
+  if (requestedAspect && requiresImageAspectRatio(imageCaps) && !supportedAspects.includes(requestedAspect)) {
     return NextResponse.json({ error: "ERR_INVALID_IMAGE_ASPECT_RATIO" }, { status: 400 });
   }
 

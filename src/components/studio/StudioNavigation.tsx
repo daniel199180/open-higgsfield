@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleDollarSign, Folder, House, Images, Menu, Palette, Settings2, UserRound, Workflow, X } from "lucide-react";
+import { CircleDollarSign, Folder, House, Images, Menu, Palette, Settings2, UserRound, WandSparkles, Workflow, X } from "lucide-react";
 
-type Workspace = "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "apis";
+type Workspace = "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis";
 type Destination = Workspace | "usage";
 
 export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace; onSelect: (destination: Destination) => void }) {
@@ -48,6 +48,7 @@ export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace
     { id: "workflows" as const, label: "Workflows", description: "Procesos creativos", icon: Workflow },
     { id: "social" as const, label: "Sistemas de diseño", description: "Marcas y proyectos guardados", icon: Palette },
     { id: "characters" as const, label: "Personajes", description: "Identidades visuales reutilizables", icon: UserRound },
+    { id: "prompts" as const, label: "Prompt Lab", description: "Extraer estilos y guardar prompts", icon: WandSparkles },
   ];
 
   return <>

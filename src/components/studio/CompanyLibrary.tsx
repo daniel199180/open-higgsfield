@@ -8,6 +8,7 @@ import type { SocialProject, LogoResult } from "@/social/types";
 import type { AudioResult } from "@/audio/types";
 import type { CompanyFolder, LibraryKind } from "@/library/types";
 import type { Asset, RunStatus } from "@/workflows/types";
+import { isLayerTask } from "@/lib/image-layer-task";
 
 type RunSummary = { id: string; workflowId: string; companyId?: string; name: string; status: RunStatus; createdAt: number; assetIds: string[] };
 type Catalog = { companies: CompanyFolder[]; images: ImageTask[]; videos: VideoTask[]; carousels: SocialProject[]; logos: LogoResult[]; audios: AudioResult[]; runs: RunSummary[]; assets: Asset[] };
@@ -41,6 +42,7 @@ export function CompanyLibrary({ onBack }: { onBack: () => void }) {
         const all: Item[] = [];
         const carouselTasks = new Set(catalog.carousels.flatMap(project => project.slides?.flatMap(slide => slide.taskIds) ?? project.taskIds));
         for (const task of catalog.images) {
+            if (isLayerTask(task)) continue;
             if (carouselTasks.has(task.task_id)) continue;
             const count = Math.max(task.result_paths?.length ?? 0, task.result_urls?.length ?? 0);
             for (let index = 0; index < Math.max(1, count); index++) all.push({ kind: "image", id: task.task_id, companyId: task.company_id, title: task.prompt || "Imagen sin descripción", detail: task.model_id, date: Date.parse(task.created_at) || 0, status: task.status, preview: count ? `/api/download/${encodeURIComponent(task.task_id)}?index=${index}` : undefined, href: count ? `/api/download/${encodeURIComponent(task.task_id)}?index=${index}` : undefined });

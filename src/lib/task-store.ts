@@ -18,11 +18,11 @@ const g = global as typeof globalThis & {
 if (!g.__taskMemStore) g.__taskMemStore = new Map<string, TaskEntry>();
 const memStore = g.__taskMemStore;
 
-const SAVE_FIELDS: (keyof AnyTask)[] = [
+const SAVE_FIELDS: (keyof ImageTask | keyof VideoTask)[] = [
     "task_id", "company_id", "status", "provider_id", "provider_model_id", "provider_connection_id", "provider_task_id", "provider_operation",
     "freepik_task_id", "freepik_status",
     "prompt", "params", "model_id", "poll_url",
-    "created_at", "media_type", "response_style", "result_paths", "result_urls",
+    "created_at", "media_type", "internal_kind", "response_style", "result_paths", "result_urls",
     "reuse_state", "error_message",
 ];
 const VIDEO_SAVE_FIELDS: (keyof VideoTask)[] = ["video_path", "video_urls", "image_url"];

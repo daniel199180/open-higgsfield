@@ -8,6 +8,7 @@ import { getTask, initStore, saveTasks, setTask } from "@/lib/task-store";
 import { shortId } from "@/lib/payload-utils";
 import type { ImageLayerMetadata, ImageLayerSet, ImageTask, TaskEvent } from "@/types";
 import { providerFetch } from "@/providers/secure-fetch";
+import { isLayerTask } from "@/lib/image-layer-task";
 
 const MODEL = "seedream-5-0-pro";
 const MAX_POLL_MS = 240_000;
@@ -181,12 +182,18 @@ async function persistLayerTask(args: { sourceTask?: ImageTask; parentTaskId: st
     for (const [index, buffer] of args.buffers.entries()) paths.push(await saveDownload(taskIdValue, `_${index}-layer.png`, buffer));
     const root = typeof args.sourceTask?.reuse_state?.edit_root_task_id === "string" ? args.sourceTask.reuse_state.edit_root_task_id : args.sourceTask?.task_id ?? args.parentTaskId;
     const rootIndex = typeof args.sourceTask?.reuse_state?.edit_root_index === "number" ? args.sourceTask.reuse_state.edit_root_index : args.parentIndex;
+    const sourceTaskId = typeof args.sourceTask?.reuse_state?.layer_source_task_id === "string"
+        ? args.sourceTask.reuse_state.layer_source_task_id
+        : isLayerTask(args.sourceTask) ? args.sourceTask?.reuse_state?.layer_source_task_id : args.sourceTask?.task_id ?? args.parentTaskId;
+    const sourceIndex = typeof args.sourceTask?.reuse_state?.layer_source_index === "number"
+        ? args.sourceTask.reuse_state.layer_source_index
+        : typeof args.sourceTask?.reuse_state?.edit_parent_index === "number" && isLayerTask(args.sourceTask) ? args.sourceTask.reuse_state.edit_parent_index : args.parentIndex;
     const events: TaskEvent[] = [{ type: "completed", media_type: "image", result_urls: paths.map((_, index) => `/api/download/${taskIdValue}?index=${index}`), result_count: paths.length, has_download: true }];
     const task = {
-        task_id: taskIdValue, company_id: args.sourceTask?.company_id, status: "COMPLETED", freepik_status: "COMPLETED", provider_id: "apimart" as const,
+        task_id: taskIdValue, company_id: args.sourceTask?.company_id, status: "COMPLETED", freepik_status: "COMPLETED", provider_id: "apimart" as const, internal_kind: "layer" as const,
         provider_model_id: MODEL, provider_connection_id: args.connectionId, prompt: args.prompt || "Separar imagen en capas", model_id: `apimart:image:${MODEL}`,
         created_at: new Date().toISOString(), media_type: "image" as const, result_paths: paths, result_urls: paths.map((_, index) => `/api/download/${taskIdValue}?index=${index}`),
-        reuse_state: { edit_root_task_id: root, edit_root_index: rootIndex, edit_parent_task_id: args.parentTaskId, edit_parent_index: args.parentIndex, edit_mode: args.mode, edit_instruction: args.prompt, layer_set: args.layerSet },
+        reuse_state: { edit_root_task_id: root, edit_root_index: rootIndex, edit_parent_task_id: args.parentTaskId, edit_parent_index: args.parentIndex, edit_mode: args.mode, edit_instruction: args.prompt, layer_source_task_id: sourceTaskId, layer_source_index: sourceIndex, layer_set: args.layerSet },
         events, _done: true,
     } as ImageTask & { events: TaskEvent[]; _done: boolean };
     setTask(task); await saveTasks();

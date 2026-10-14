@@ -9,6 +9,7 @@ import type { AudioResult } from "@/audio/types";
 import type { WorkflowRun, Asset, NodeRun } from "@/workflows/types";
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError } from "@/workflows/types";
+import { isLayerTask } from "@/lib/image-layer-task";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
             store.list<LogoResult>("logo:"), store.list<AudioResult>("audio:"), store.list<WorkflowRun>("run:"), store.list<Asset>("asset:"),
         ]);
         const runSummaries = runs.map(run => ({ id: run.id, workflowId: run.workflowId, companyId: run.companyId, name: run.name, status: run.status, createdAt: run.createdAt, assetIds: [...new Set(Object.values(run.nodes).flatMap(outputAssets))] }));
-        return NextResponse.json({ companies, images: getImageTasks(), videos: getVideoTasks(), carousels, logos, audios, runs: runSummaries, assets }, { headers: { "Cache-Control": "private, no-store" } });
+        return NextResponse.json({ companies, images: getImageTasks().filter((task) => !isLayerTask(task)), videos: getVideoTasks(), carousels, logos, audios, runs: runSummaries, assets }, { headers: { "Cache-Control": "private, no-store" } });
     } catch { return NextResponse.json({ error: "No se pudo cargar la biblioteca." }, { status: 500 }); }
 }
 

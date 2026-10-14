@@ -7,7 +7,7 @@ import { STORAGE_ROOT } from "@/lib/storage-paths";
 import type { Workflow, WorkflowRun, Asset } from "./types";
 
 export const WORKFLOW_DIR = path.join(STORAGE_ROOT, "workflows");
-type Document = Workflow | WorkflowRun | Asset | import("@/social/types").BrandSystem | import("@/social/types").SocialProject | import("@/social/types").LogoResult | import("@/social/types").Character | import("@/audio/types").SavedVoice | import("@/audio/types").AudioResult | import("@/audio/types").VoicePreview | import("@/library/types").CompanyFolder;
+type Document = Workflow | WorkflowRun | Asset | import("@/social/types").BrandSystem | import("@/social/types").SocialProject | import("@/social/types").LogoResult | import("@/social/types").Character | import("@/audio/types").SavedVoice | import("@/audio/types").AudioResult | import("@/audio/types").VoicePreview | import("@/library/types").CompanyFolder | import("@/prompts/types").SavedPrompt;
 export type Documents = Map<string, Document>;
 type Store = { transaction<T>(fn: (docs: Documents) => T): Promise<T>; read<T extends Document>(key: string): Promise<T | undefined>; list<T extends Document>(prefix: string): Promise<T[]> };
 

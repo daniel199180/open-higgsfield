@@ -2,8 +2,10 @@
  * Media upload utilities — shared between video and image route handlers.
  */
 import sharp from "sharp";
-import { saveInputLocally, uploadToTmpfiles, resolveLocalUpload } from "@/lib/upload";
+import { saveInputLocally, uploadToTmpfiles, resolveLocalUpload, readDownload } from "@/lib/upload";
 import { assertSafeRemoteUrl } from "@/lib/safe-url";
+import { getTask } from "@/lib/task-store";
+import { readAsset } from "@/workflows/assets";
 
 /** Convert an image buffer to JPEG format */
 export async function toJpeg(buffer: Buffer): Promise<Buffer> {
@@ -49,7 +51,30 @@ export async function processFileUpload(
 
 /** Resolve a URL that may be a local upload reference to a remote URL */
 export async function resolveUrl(url: string): Promise<ResolvedMedia> {
-    if (url.startsWith("/api/uploaded/") || url.startsWith("/api/download/")) {
+    if (url.startsWith("/api/workflows/assets/")) {
+        const id = url.slice("/api/workflows/assets/".length).split(/[?#/]/)[0];
+        const { asset, data } = await readAsset(id);
+        if (asset.kind === "image") return { ...(await processImageUpload(data)), localUrl: url };
+        if (asset.kind === "video") return { ...(await processFileUpload(data, `${id}.mp4`, asset.mime)), localUrl: url };
+        throw new Error("ERR_INVALID_MEDIA_TYPE");
+    }
+    if (url.startsWith("/api/download/")) {
+        const parsed = new URL(url, "http://local.invalid");
+        const taskId = parsed.pathname.slice("/api/download/".length).split("/")[0];
+        const task = getTask(taskId);
+        const index = Math.max(0, Number(parsed.searchParams.get("index") ?? "0") || 0);
+        if (!task) throw new Error("ERR_MEDIA_NOT_FOUND");
+        const filePath = task.result_paths?.[index];
+        if (filePath) {
+            const data = await readDownload(filePath);
+            if (task.media_type === "image") return { ...(await processImageUpload(data)), localUrl: url };
+            return { ...(await processFileUpload(data, `${taskId}.mp4`, "video/mp4")), localUrl: url };
+        }
+        const remote = task.media_type === "image" ? task.result_urls?.[index] : task.video_urls?.[index] ?? task.video_urls?.[0];
+        if (remote) return { remoteUrl: (await assertSafeRemoteUrl(remote)).toString(), localUrl: url };
+        throw new Error("ERR_MEDIA_NOT_FOUND");
+    }
+    if (url.startsWith("/api/uploaded/")) {
         const remoteUrl = await resolveLocalUpload(url);
         return { remoteUrl, localUrl: url };
     }

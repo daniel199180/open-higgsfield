@@ -81,6 +81,8 @@ export interface ImageTask {
     poll_url?: string | null;
     created_at: string;
     media_type: "image";
+    /** Internal editor resources (for example decomposed layers) stay out of libraries. */
+    internal_kind?: "layer";
     response_style?: string;
     result_paths?: string[];
     result_urls?: string[];

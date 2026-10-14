@@ -10,6 +10,7 @@ import { Lightbox } from "@/components/tasks/Lightbox";
 import { useVideoTasks, revalidateVideoTasks } from "@/hooks/useVideoTasks";
 import { useImageTasks, revalidateImageTasks } from "@/hooks/useImageTasks";
 import type { VideoTask, ImageTask, TaskEvent } from "@/types";
+import { isLayerTask } from "@/lib/image-layer-task";
 
 interface ResultsGridProps {
     mode: "video" | "image";
@@ -82,7 +83,7 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
         });
     }, [allVideoItems]);
 
-    const tasks = mode === "video" ? videoTasks : imageTasks;
+    const tasks = mode === "video" ? videoTasks : imageTasks.filter((task) => !isLayerTask(task));
     const isEmpty = tasks.length === 0;
 
     return (
@@ -117,7 +118,7 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
                                     />
                                 ))}
                             {mode === "image" &&
-                                (imageTasks as ImageTask[]).map((task) => (
+                                (tasks as ImageTask[]).map((task) => (
                                     <ImageResultCard
                                         key={task.task_id}
                                         task={task}

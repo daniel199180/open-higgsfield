@@ -7,6 +7,7 @@ import { Images, Loader2, Upload, X } from "lucide-react";
 import { useImageTasks, revalidateImageTasks } from "@/hooks/useImageTasks";
 import { ImageEditor } from "@/components/tasks/ImageEditor";
 import { useCompanySelection } from "@/components/command-bar/CompanySelect";
+import { isLayerTask } from "@/lib/image-layer-task";
 
 type Selection = { taskId: string; index: number; imageUrl: string; prompt?: string };
 
@@ -26,7 +27,7 @@ export function ImageEditingStudio({ onBack }: { onBack: () => void }) {
         window.addEventListener("keydown", closeOnEscape);
         return () => window.removeEventListener("keydown", closeOnEscape);
     }, [pickerOpen]);
-    const images = tasks.filter((task) => task.status === "COMPLETED" && (task.result_paths?.length || task.result_urls?.length)
+    const images = tasks.filter((task) => !isLayerTask(task) && task.status === "COMPLETED" && (task.result_paths?.length || task.result_urls?.length)
         && (folderFilter === "all" || (folderFilter === "unassigned" ? !task.company_id : task.company_id === folderFilter))
         && (!search.trim() || `${task.prompt ?? ""} ${task.model_id}`.toLocaleLowerCase("es").includes(search.trim().toLocaleLowerCase("es"))))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))

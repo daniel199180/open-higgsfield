@@ -27,6 +27,8 @@ export function StudioShell() {
   const [workspace, setWorkspace] = useState<"studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis">("studio");
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const beforeLeaveWorkflow = useRef<(() => Promise<boolean>) | null>(null);
+  const beforeLeaveEditor = useRef<(() => Promise<boolean>) | null>(null);
+  const registerEditorGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveEditor.current = guard; }, []);
   const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
   const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
     setWorkspace(next);
@@ -40,6 +42,7 @@ export function StudioShell() {
     if (destination === "usage") { setUsageOpen(true); return; }
     if (destination === workspace) return;
     if (workspace === "workflows" && beforeLeaveWorkflow.current && !await beforeLeaveWorkflow.current()) return;
+    if (workspace === "editor" && beforeLeaveEditor.current && !await beforeLeaveEditor.current()) return;
     navigateWorkspace(destination);
   }, [navigateWorkspace, workspace]);
   const changeMode = useCallback((next: StudioMode) => {
@@ -141,7 +144,7 @@ export function StudioShell() {
         workspace === "characters" ? <CharacterStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "companies" ? <CompanyLibrary onBack={() => navigateWorkspace("studio")} /> :
         workspace === "prompts" ? <PromptLibraryStudio onBack={() => navigateWorkspace("studio")} /> :
-        workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerEditorGuard} /> :
         workspace === "apis" ? <AdminConnectionsPanel onBack={() => navigateWorkspace("studio")} /> :
           <div className="relative h-screen overflow-hidden">
             {mode === "audio" ? <AudioStudio onModeChange={changeMode} /> : <>

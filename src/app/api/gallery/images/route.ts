@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
         await initStore();
         const images: GalleryImage[] = [];
         for (const task of getImageTasks()) {
-            if (task.status !== "COMPLETED") continue;
+            if (task.status !== "COMPLETED" || task.reuse_state?.editor_internal) continue;
             const urls = task.result_urls ?? [];
             urls.forEach((url, index) => images.push({
                 id: `task:${task.task_id}:${index}`,

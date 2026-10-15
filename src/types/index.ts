@@ -99,6 +99,7 @@ export interface ImageLayerMetadata {
     name: string;
     description: string;
     size: { width: number; height: number };
+    role?: "reference" | "base" | "layer";
     boundingBox: {
         absolute: [number, number, number, number];
         normalized: [number, number, number, number];
@@ -106,11 +107,15 @@ export interface ImageLayerMetadata {
 }
 
 export interface ImageLayerSet {
-    version: 1;
+    version: 1 | 2;
     model: string;
     sourceWidth: number;
     sourceHeight: number;
+    /** Canonical canvas used by the provider output and the editor. */
+    canvasWidth?: number;
+    canvasHeight?: number;
     baseIndex: number;
+    referenceIndex?: number;
     layers: ImageLayerMetadata[];
 }
 

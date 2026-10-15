@@ -83,7 +83,7 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
         });
     }, [allVideoItems]);
 
-    const tasks = mode === "video" ? videoTasks : imageTasks.filter((task) => !isLayerTask(task));
+    const tasks = mode === "video" ? videoTasks : imageTasks.filter((task) => !isLayerTask(task) && !task.reuse_state?.editor_internal);
     const isEmpty = tasks.length === 0;
 
     return (

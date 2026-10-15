@@ -64,16 +64,39 @@ function urlFromValue(value: unknown): string | undefined {
     return undefined;
 }
 
-function outputUrls(value: unknown, result: string[] = []): string[] {
+type OutputEntry = { url: string; record?: JsonRecord };
+
+function outputEntry(value: unknown): OutputEntry | undefined {
     const direct = urlFromValue(value);
-    if (direct) { result.push(direct); return result; }
-    if (!value || typeof value !== "object") return result;
-    if (Array.isArray(value)) { for (const item of value) outputUrls(item, result); return result; }
+    if (direct) return { url: direct };
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const record = value as JsonRecord;
-    for (const key of ["url", "image_url", "output_url", "download_url", "images", "outputs", "urls"]) {
-        if (key in record) outputUrls(record[key], result);
+    for (const key of ["url", "image_url", "output_url", "download_url", "b64_json"]) {
+        const url = key === "b64_json" && typeof record[key] === "string"
+            ? (record[key] as string).startsWith("data:image/") ? record[key] as string : `data:image/png;base64,${record[key] as string}`
+            : urlFromValue(record[key]);
+        if (url) return { url, record };
     }
-    return [...new Set(result)];
+    return undefined;
+}
+
+/**
+ * Keep provider image data positional. Seedream's z_index and bounding_box
+ * belong to the corresponding data item, so recursively flattening every URL
+ * can silently pair a layer with another layer's metadata.
+ */
+function outputEntries(value: unknown): OutputEntry[] {
+    const direct = outputEntry(value);
+    if (direct) return [direct];
+    if (!value || typeof value !== "object") return [];
+    if (Array.isArray(value)) return value.flatMap((item) => outputEntries(item));
+    const record = value as JsonRecord;
+    for (const key of ["data", "images", "outputs", "urls", "url"]) {
+        if (!(key in record)) continue;
+        const entries = outputEntries(record[key]);
+        if (entries.length) return entries;
+    }
+    return [];
 }
 
 function numberOr(value: unknown, fallback: number): number {
@@ -91,6 +114,10 @@ function tuple(value: unknown, fallback: [number, number, number, number]): [num
 }
 
 function parseSize(value: unknown, fallback: { width: number; height: number }) {
+    if (typeof value === "string") {
+        const match = /^(\d+)x(\d+)$/.exec(value.trim());
+        if (match) return { width: Number(match[1]), height: Number(match[2]) };
+    }
     if (Array.isArray(value)) return { width: numberOr(value[0], fallback.width), height: numberOr(value[1], fallback.height) };
     if (value && typeof value === "object") {
         const row = value as JsonRecord;
@@ -99,27 +126,31 @@ function parseSize(value: unknown, fallback: { width: number; height: number }) 
     return fallback;
 }
 
-export function parseLayerDecomposition(payload: JsonRecord, sourceWidth: number, sourceHeight: number): { urls: string[]; layers: ImageLayerMetadata[] } | null {
+export function parseLayerDecomposition(payload: JsonRecord, sourceWidth: number, sourceHeight: number): { urls: string[]; layers: ImageLayerMetadata[]; canvasSize: { width: number; height: number } } | null {
     const body = taskBody(payload);
     const result = body.result ?? body.output ?? body.data ?? body;
-    const urls = outputUrls(result);
+    const entries = outputEntries(result);
+    const urls = entries.map((entry) => entry.url);
     const rawLayers = (result && typeof result === "object" && !Array.isArray(result) ? (result as JsonRecord).layers : undefined) ?? body.layers;
     const layerRows = Array.isArray(rawLayers) ? rawLayers : [];
     if (!urls.length) return null;
+    const baseRecord = entries[0]?.record ?? (layerRows[0] && typeof layerRows[0] === "object" ? layerRows[0] as JsonRecord : {});
+    const canvasSize = parseSize(baseRecord.size, { width: sourceWidth, height: sourceHeight });
     const layers: ImageLayerMetadata[] = urls.map((_, index) => {
-        const raw = (layerRows[index] && typeof layerRows[index] === "object" ? layerRows[index] as JsonRecord : {}) as JsonRecord;
+        const raw = (layerRows[index] && typeof layerRows[index] === "object" ? layerRows[index] as JsonRecord : entries[index]?.record ?? {}) as JsonRecord;
         const normalized = tuple(raw.bounding_box_normalized ?? (raw.bounding_box && typeof raw.bounding_box === "object" ? (raw.bounding_box as JsonRecord).normalized : undefined), [0, 0, 1000, 1000]);
-        const absolute = tuple(raw.bounding_box_absolute ?? (raw.bounding_box && typeof raw.bounding_box === "object" ? (raw.bounding_box as JsonRecord).absolute : undefined), index === 0 ? [0, 0, sourceWidth, sourceHeight] : [0, 0, sourceWidth, sourceHeight]);
+        const absolute = tuple(raw.bounding_box_absolute ?? (raw.bounding_box && typeof raw.bounding_box === "object" ? (raw.bounding_box as JsonRecord).absolute : undefined), index === 0 ? [0, 0, canvasSize.width, canvasSize.height] : [0, 0, canvasSize.width, canvasSize.height]);
         return {
             index,
             zIndex: Math.round(numberOr(raw.z_index, index)),
             name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 120) : index === 0 ? "Imagen base" : `Capa ${index}`,
             description: typeof raw.description === "string" ? raw.description.trim().slice(0, 400) : "",
             size: parseSize(raw.size, { width: Math.max(1, absolute[2] - absolute[0]), height: Math.max(1, absolute[3] - absolute[1]) }),
+            role: index === 0 ? "base" : "layer",
             boundingBox: { absolute, normalized },
         };
     });
-    return { urls, layers };
+    return { urls, layers, canvasSize };
 }
 
 async function sourceData(taskIdValue: string, index: number): Promise<{ task: ImageTask; png: Buffer; width: number; height: number }> {
@@ -160,36 +191,30 @@ function clampInt(value: number, min: number, max: number): number {
 
 /**
  * APIMart may return either a full-canvas transparent PNG or a cropped layer.
- * The editor needs a common canvas for every layer; otherwise each crop is
- * positioned as if it were the whole image and the original composition is
- * lost. Normalize cropped outputs into the source canvas using the provider's
- * bounding box while preserving full-canvas outputs unchanged.
+ * Keep the base at canvas size and normalize each editable layer to its own
+ * bounding-box dimensions. The editor then places that crop on the shared
+ * provider canvas instead of stretching every output over the whole image.
  */
-async function alignLayerToCanvas(buffer: Buffer, layer: ImageLayerMetadata, sourceWidth: number, sourceHeight: number): Promise<Buffer> {
+async function fitLayerToBounds(buffer: Buffer, layer: ImageLayerMetadata, canvasWidth: number, canvasHeight: number): Promise<Buffer> {
     const metadata = await sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).metadata();
-    const width = metadata.width ?? sourceWidth;
-    const height = metadata.height ?? sourceHeight;
-    if (width === sourceWidth && height === sourceHeight) return sharp(buffer).png().toBuffer();
-
+    const width = metadata.width ?? canvasWidth;
+    const height = metadata.height ?? canvasHeight;
     const [rawLeft, rawTop, rawRight, rawBottom] = layer.boundingBox.absolute;
-    const left = clampInt(rawLeft, 0, Math.max(0, sourceWidth - 1));
-    const top = clampInt(rawTop, 0, Math.max(0, sourceHeight - 1));
-    const right = clampInt(rawRight, left + 1, sourceWidth);
-    const bottom = clampInt(rawBottom, top + 1, sourceHeight);
+    const left = clampInt(rawLeft, 0, Math.max(0, canvasWidth - 1));
+    const top = clampInt(rawTop, 0, Math.max(0, canvasHeight - 1));
+    const right = clampInt(rawRight, left + 1, canvasWidth);
+    const bottom = clampInt(rawBottom, top + 1, canvasHeight);
     const targetWidth = Math.max(1, right - left);
     const targetHeight = Math.max(1, bottom - top);
-    const resized = await sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).resize(targetWidth, targetHeight, { fit: "fill" }).png().toBuffer();
-    return sharp({
-        create: {
-            width: sourceWidth,
-            height: sourceHeight,
-            channels: 4,
-            background: { r: 0, g: 0, b: 0, alpha: 0 },
-        },
-    }).composite([{ input: resized, left, top }]).png().toBuffer();
+    if (layer.role === "base" || layer.index === 0) return sharp(buffer).png().toBuffer();
+    if (width === targetWidth && height === targetHeight) return sharp(buffer).png().toBuffer();
+    if (width === canvasWidth && height === canvasHeight) {
+        return sharp(buffer).extract({ left, top, width: targetWidth, height: targetHeight }).png().toBuffer();
+    }
+    return sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).resize(targetWidth, targetHeight, { fit: "fill" }).png().toBuffer();
 }
 
-async function poll(connection: ProviderConnection, providerTaskId: string, sourceWidth: number, sourceHeight: number): Promise<{ urls: string[]; layers: ImageLayerMetadata[] }> {
+async function poll(connection: ProviderConnection, providerTaskId: string, sourceWidth: number, sourceHeight: number): Promise<{ urls: string[]; layers: ImageLayerMetadata[]; canvasSize: { width: number; height: number } }> {
     const started = Date.now();
     for (;;) {
         const payload = await requestJson(`/v1/tasks/${encodeURIComponent(providerTaskId)}?language=es`, connection);
@@ -207,8 +232,8 @@ async function poll(connection: ProviderConnection, providerTaskId: string, sour
     }
 }
 
-function layerSet(sourceWidth: number, sourceHeight: number, parsed: { layers: ImageLayerMetadata[] }): ImageLayerSet {
-    return { version: 1, model: MODEL, sourceWidth, sourceHeight, baseIndex: 0, layers: parsed.layers };
+function layerSet(sourceWidth: number, sourceHeight: number, canvasWidth: number, canvasHeight: number, parsed: { layers: ImageLayerMetadata[] }): ImageLayerSet {
+    return { version: 2, model: MODEL, sourceWidth, sourceHeight, canvasWidth, canvasHeight, baseIndex: 1, referenceIndex: 0, layers: parsed.layers };
 }
 
 async function persistLayerTask(args: { sourceTask?: ImageTask; parentTaskId: string; parentIndex: number; prompt: string; connectionId: string; layerSet: ImageLayerSet; buffers: Buffer[]; mode: "layer-decomposition" | "layer-edit" }): Promise<{ task: ImageTask; imageUrl: string }> {
@@ -241,27 +266,34 @@ export async function decomposeImage(taskIdValue: string, index: number, prompt:
     if (!connection?.credentials.apiKey) throw new ImageLayerError("Conecta APIMart antes de separar imágenes en capas.", 400);
     const payload = await requestJson("/v1/images/generations", connection, { method: "POST", body: JSON.stringify({ model: MODEL, prompt: prompt || undefined, image_urls: [`data:image/png;base64,${source.png.toString("base64")}`], layer_decomposition: true, size: ["auto", "1K", "1.5K", "2K"].includes(size) ? size : "auto", output_format: "png" }) });
     const providerTaskId = taskId(payload);
-    let parsed = providerTaskId ? await poll(connection, providerTaskId, source.width, source.height) : parseLayerDecomposition(payload, source.width, source.height);
+    const parsed = providerTaskId ? await poll(connection, providerTaskId, source.width, source.height) : parseLayerDecomposition(payload, source.width, source.height);
     if (!parsed) throw new ImageLayerError("APIMart no devolvió capas válidas.", 502);
-    parsed = { ...parsed, layers: parseLayerDecomposition({ result: { url: parsed.urls, layers: parsed.layers } }, source.width, source.height)!.layers };
     const providerBuffers = await Promise.all(parsed.urls.map(imageBuffer));
+    const providerMetadata = await Promise.all(providerBuffers.map((buffer) => sharp(buffer, { limitInputPixels: 40_000_000, failOn: "error" }).metadata()));
+    const invalidAlphaIndex = providerMetadata.findIndex((metadata, providerIndex) => providerIndex > 0 && !metadata.hasAlpha);
+    if (invalidAlphaIndex >= 0) throw new ImageLayerError(`APIMart devolvió la capa ${invalidAlphaIndex} sin transparencia. Vuelve a separar la imagen.`, 502);
+    const baseMetadata = providerMetadata[0];
+    const canvasWidth = baseMetadata.width ?? parsed.canvasSize.width;
+    const canvasHeight = baseMetadata.height ?? parsed.canvasSize.height;
     const providerLayers = parsed.layers.map((layer, providerIndex) => ({
         ...layer,
         index: providerIndex + 1,
-        zIndex: layer.zIndex + 1,
+        zIndex: layer.zIndex,
+        role: providerIndex === 0 ? "base" as const : "layer" as const,
         name: layer.name === "Imagen base" ? "Base separada" : layer.name,
     }));
-    const alignedProviderBuffers = await Promise.all(providerBuffers.map((buffer, providerIndex) => alignLayerToCanvas(buffer, providerLayers[providerIndex], source.width, source.height)));
+    const alignedProviderBuffers = await Promise.all(providerBuffers.map((buffer, providerIndex) => fitLayerToBounds(buffer, providerLayers[providerIndex], canvasWidth, canvasHeight)));
     const referenceLayer: ImageLayerMetadata = {
         index: 0,
-        zIndex: 0,
+        zIndex: -1,
         name: "Referencia original",
         description: "Imagen inicial conservada como referencia y capa bloqueada.",
         size: { width: source.width, height: source.height },
-        boundingBox: { absolute: [0, 0, source.width, source.height], normalized: [0, 0, 1000, 1000] },
+        role: "reference",
+        boundingBox: { absolute: [0, 0, canvasWidth, canvasHeight], normalized: [0, 0, 1000, 1000] },
     };
     const normalizedLayers = [referenceLayer, ...providerLayers];
-    const normalizedSet: ImageLayerSet = { ...layerSet(source.width, source.height, { layers: normalizedLayers }), baseIndex: 0 };
+    const normalizedSet: ImageLayerSet = { ...layerSet(source.width, source.height, canvasWidth, canvasHeight, { layers: normalizedLayers }) };
     const saved = await persistLayerTask({ sourceTask: source.task, parentTaskId: taskIdValue, parentIndex: index, prompt, connectionId: connection.id, layerSet: normalizedSet, buffers: [source.png, ...alignedProviderBuffers], mode: "layer-decomposition" });
     return { taskId: saved.task.task_id, imageUrl: saved.imageUrl, layers: (saved.task.reuse_state?.layer_set as ImageLayerSet).layers };
 }
@@ -270,7 +302,7 @@ export async function editImageLayer(layerTaskId: string, layerIndex: number, pr
     await initStore();
     const parent = getTask(layerTaskId);
     const layerSet = parent?.reuse_state?.layer_set as ImageLayerSet | undefined;
-    if (!parent || parent.media_type !== "image" || parent.status !== "COMPLETED" || !layerSet || !Number.isInteger(layerIndex) || layerIndex <= 0 || layerIndex >= layerSet.layers.length) throw new ImageLayerError("Selecciona una capa editable válida.");
+    if (!parent || parent.media_type !== "image" || parent.status !== "COMPLETED" || !layerSet || !Number.isInteger(layerIndex) || layerIndex < 0 || layerIndex >= layerSet.layers.length || layerIndex === layerSet.baseIndex || layerIndex === layerSet.referenceIndex || layerSet.layers[layerIndex]?.role === "base" || layerSet.layers[layerIndex]?.role === "reference") throw new ImageLayerError("Selecciona una capa editable válida.");
     if (!prompt.trim() || prompt.length > 3000) throw new ImageLayerError("Describe el cambio de la capa.");
     const connection = await getConnectionForProvider("apimart");
     if (!connection?.credentials.apiKey) throw new ImageLayerError("Conecta APIMart antes de editar una capa.", 400);
@@ -281,7 +313,9 @@ export async function editImageLayer(layerTaskId: string, layerIndex: number, pr
     const providerTaskId = taskId(payload);
     const parsed = providerTaskId ? await poll(connection, providerTaskId, layerSet.sourceWidth, layerSet.sourceHeight) : parseLayerDecomposition(payload, layerSet.sourceWidth, layerSet.sourceHeight);
     if (!parsed?.urls[0]) throw new ImageLayerError("APIMart no devolvió la capa editada.", 502);
-    const edited = await alignLayerToCanvas(await imageBuffer(parsed.urls[0]), layerSet.layers[layerIndex], layerSet.sourceWidth, layerSet.sourceHeight);
+    const canvasWidth = layerSet.canvasWidth ?? layerSet.sourceWidth;
+    const canvasHeight = layerSet.canvasHeight ?? layerSet.sourceHeight;
+    const edited = await fitLayerToBounds(await imageBuffer(parsed.urls[0]), layerSet.layers[layerIndex], canvasWidth, canvasHeight);
     const buffers = await Promise.all((parent.result_paths ?? []).map((file, index) => index === layerIndex ? edited : fs.readFile(file)));
     const nextSet: ImageLayerSet = { ...layerSet, layers: layerSet.layers.map((item) => item.index === layerIndex ? { ...item, description: prompt.trim().slice(0, 400) } : item) };
     const saved = await persistLayerTask({ sourceTask: parent as ImageTask, parentTaskId: layerTaskId, parentIndex: 0, prompt, connectionId: connection.id, layerSet: nextSet, buffers, mode: "layer-edit" });

@@ -5,7 +5,9 @@ export interface BrandSystem {
     secondaryColor: string;
     accentColor: string;
     headingFont: string;
+    subheadingFont?: string;
     bodyFont: string;
+    secondaryBodyFont?: string;
     voice: string;
     visualRules: string;
     negativePrompt?: string;

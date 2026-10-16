@@ -41,7 +41,7 @@ import { CompanySelect, useCompanySelection } from "@/components/command-bar/Com
 import type { Character } from "@/social/types";
 import type { BrandSystem } from "@/social/types";
 import type { SocialProject } from "@/social/types";
-import { brandLogoAssetIds, brandImageAssetIds } from "@/social/brand";
+import { brandLogoAssetIds, brandImageAssetIds, brandTypographyPrompt } from "@/social/brand";
 import { PillPopover } from "@/components/command-bar/PillPopover";
 import { StudioModePill, type StudioMode } from "@/components/studio/StudioModePill";
 import { LogoComposer } from "@/components/command-bar/LogoComposer";
@@ -681,7 +681,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             const brandPrompt = selectedBrand ? [
                 `Identidad visual de marca: ${selectedBrand.name}.`,
                 `Colores: principal ${selectedBrand.primaryColor}; secundario ${selectedBrand.secondaryColor}; acento ${selectedBrand.accentColor}.`,
-                `Tipografías: títulos ${selectedBrand.headingFont}; cuerpo ${selectedBrand.bodyFont}.`,
+                brandTypographyPrompt(selectedBrand),
                 selectedBrand.voice ? `Tono: ${selectedBrand.voice}.` : "",
                 selectedBrand.visualRules ? `Reglas visuales: ${selectedBrand.visualRules}.` : "",
                 selectedBrand.negativePrompt ? `Prohibiciones de marca: ${selectedBrand.negativePrompt}` : "",

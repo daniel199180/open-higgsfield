@@ -5,8 +5,8 @@ import type { ImageTask } from "@/types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
-export function useImageTasks() {
-  const { data, error, isLoading, mutate } = useSWR<ImageTask[]>("/api/image-tasks", fetcher, {
+export function useImageTasks(enabled = true) {
+  const { data, error, isLoading, mutate } = useSWR<ImageTask[]>(enabled ? "/api/image-tasks" : null, fetcher, {
     refreshInterval: (data) => data?.some((t) => !t._done) ? 3000 : 0,
     revalidateOnFocus: false,
   });

@@ -1,23 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import dynamic from "next/dynamic";
+import useSWR from "swr";
 import { ArrowLeft, ArrowUpRight, Download, ImagePlus, Palette, Plus, Save, Trash2, VectorSquare } from "lucide-react";
 import type { ImageTask } from "@/types";
 import type { BrandSystem, SocialFormat, SocialProject } from "@/social/types";
-import { brandLogoAssetIds, brandSaveInput, MAX_BRAND_LOGOS, MAX_BRAND_REFERENCES } from "@/social/brand";
+import { brandLogoAssetIds, brandSaveInput, brandTypography, MAX_BRAND_LOGOS, MAX_BRAND_REFERENCES } from "@/social/brand";
 import { useImageTasks } from "@/hooks/useImageTasks";
-import { LogoLab } from "./LogoLab";
 import { BrandReferencesEditor } from "./BrandReferencesEditor";
+import { GoogleFontPicker, useGoogleFontPreview } from "./GoogleFontPicker";
+import { fontFamilyStyle } from "@/lib/google-fonts";
+
+const LogoLab = dynamic(() => import("./LogoLab").then(module => module.LogoLab), { loading: () => <p className="text-sm text-white/50">Cargando logos…</p> });
 
 /* eslint-disable @next/next/no-img-element -- outputs can come from arbitrary configured image providers. */
 
 type Props = { onBack: () => void };
 type BrandDraft = Omit<BrandSystem, "id" | "createdAt" | "updatedAt"> & { id?: string };
 type SocialData = { brands: BrandSystem[]; projects: SocialProject[]; storage: string };
+const emptySocial: SocialData = { brands: [], projects: [], storage: "" };
+async function fetchSocial(url: string): Promise<SocialData> {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error("No se pudieron cargar las marcas y proyectos.");
+    return response.json();
+}
 
 const blankBrand: BrandDraft = {
     name: "", primaryColor: "#000000", secondaryColor: "#ffffff", accentColor: "#ff4d4d",
-    headingFont: "Montserrat", bodyFont: "Inter", voice: "Cercana, clara y profesional",
+    headingFont: "Montserrat", subheadingFont: "Montserrat", bodyFont: "Inter", secondaryBodyFont: "Inter", voice: "Cercana, clara y profesional",
     visualRules: "Diseño limpio, alto contraste y jerarquía visual clara.",
     negativePrompt: "", references: [],
 };
@@ -118,7 +129,8 @@ function escapeAttribute(value: string) {
 }
 
 export function SocialStudio({ onBack }: Props) {
-    const [data, setData] = useState<SocialData>({ brands: [], projects: [], storage: "" });
+    const { data: social, error: loadError, mutate: load } = useSWR<SocialData>("/api/social?includeAssets=0", fetchSocial, { revalidateOnFocus: false });
+    const data = social ?? emptySocial;
     const [brandDraft, setBrandDraft] = useState<BrandDraft>(blankBrand);
     const [selectedProjectId, setSelectedProjectId] = useState("");
     const [activeTab, setActiveTab] = useState<"brands" | "projects" | "logos">("brands");
@@ -126,21 +138,14 @@ export function SocialStudio({ onBack }: Props) {
     const [logoAssetIds, setLogoAssetIds] = useState<string[]>([]);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
-    const { tasks, mutate: refreshTasks } = useImageTasks();
+    const { tasks, mutate: refreshTasks } = useImageTasks(activeTab === "projects");
+    const typography = brandTypography(brandDraft);
+    useGoogleFontPreview(typography.headingFont);
+    useGoogleFontPreview(typography.subheadingFont);
+    useGoogleFontPreview(typography.bodyFont);
+    useGoogleFontPreview(typography.secondaryBodyFont);
 
-    const load = useCallback(async () => {
-        const response = await fetch("/api/social", { cache: "no-store" });
-        if (!response.ok) throw new Error("No se pudieron cargar las marcas y proyectos.");
-        const social = await response.json() as SocialData;
-        setData(social);
-        setSelectedProjectId(current => social.projects.some(item => item.id === current) ? current : social.projects[0]?.id ?? "");
-    }, []);
-
-    useEffect(() => {
-        void load().catch(reason => setError(reason instanceof Error ? reason.message : "Error al cargar."));
-    }, [load]);
-
-    const project = data.projects.find(item => item.id === selectedProjectId);
+    const project = data.projects.find(item => item.id === selectedProjectId) ?? data.projects[0];
     const projectTasks = (project?.taskIds ?? []).flatMap(id => {
         const task = tasks.find(item => item.task_id === id) as ImageTask | undefined;
         return task ? [task] : [];
@@ -266,7 +271,10 @@ export function SocialStudio({ onBack }: Props) {
             }
             setBrandDraft({
                 name: value.name!, primaryColor: value.primaryColor!, secondaryColor: value.secondaryColor!, accentColor: value.accentColor!,
-                headingFont: value.headingFont!, bodyFont: value.bodyFont!, voice: typeof value.voice === "string" ? value.voice : "",
+                headingFont: value.headingFont!, bodyFont: value.bodyFont!,
+                subheadingFont: typeof value.subheadingFont === "string" && value.subheadingFont.trim() ? value.subheadingFont : value.headingFont!,
+                secondaryBodyFont: typeof value.secondaryBodyFont === "string" && value.secondaryBodyFont.trim() ? value.secondaryBodyFont : value.bodyFont!,
+                voice: typeof value.voice === "string" ? value.voice : "",
                 visualRules: typeof value.visualRules === "string" ? value.visualRules : "",
                 negativePrompt: typeof value.negativePrompt === "string" ? value.negativePrompt : "", references: importedReferences,
             });
@@ -348,8 +356,8 @@ export function SocialStudio({ onBack }: Props) {
     const previewPrimary = validColor(brandDraft.primaryColor, "#000000");
     const previewSecondary = validColor(brandDraft.secondaryColor, "#ffffff");
     const previewAccent = validColor(brandDraft.accentColor, "#ff4d4d");
-    const previewHeadingFont = `"${brandDraft.headingFont.replaceAll('"', "").replaceAll("\\", "").slice(0, 80)}", system-ui, sans-serif`;
-    const previewBodyFont = `"${brandDraft.bodyFont.replaceAll('"', "").replaceAll("\\", "").slice(0, 80)}", system-ui, sans-serif`;
+    const previewHeadingFont = fontFamilyStyle(typography.headingFont);
+    const previewBodyFont = fontFamilyStyle(typography.bodyFont);
 
     return <main className="h-[100dvh] overflow-x-hidden overflow-y-auto bg-black text-white">
         <header className="sticky top-0 z-20 flex min-h-16 items-center gap-3 border-b border-white/10 bg-black/90 pl-20 pr-4 backdrop-blur-xl sm:pl-24 sm:pr-7">
@@ -361,7 +369,7 @@ export function SocialStudio({ onBack }: Props) {
 
         <div className="mx-auto max-w-[1440px] px-4 pb-24 pt-6 sm:px-8 sm:pt-9">
             <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[#101010] px-6 py-8 sm:px-10 sm:py-10">
-                <div className="pointer-events-none absolute -right-16 -top-32 h-80 w-80 rounded-full bg-[#ff4d4d]/10 blur-[90px]" />
+                <div className="pointer-events-none absolute -right-16 -top-32 h-80 w-80 rounded-full bg-[radial-gradient(circle,#ff4d4d18,transparent_70%)]" />
                 <div className="pointer-events-none absolute right-10 top-0 hidden h-full w-px rotate-[28deg] bg-gradient-to-b from-transparent via-[#ff4d4d]/20 to-transparent lg:block" />
                 <div className="relative flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-2xl">
@@ -383,7 +391,7 @@ export function SocialStudio({ onBack }: Props) {
             </nav>
 
             <section className="mt-7 min-w-0">
-                {error && <div role="alert" className="mb-5 rounded-xl border border-red-400/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">{error}</div>}
+                {(error || loadError) && <div role="alert" className="mb-5 rounded-xl border border-red-400/20 bg-red-950/30 px-4 py-3 text-sm text-red-200">{error || "No se pudieron cargar las marcas y proyectos."}</div>}
                 {activeTab === "logos" && <LogoLab brands={data.brands} initialBrandId={logoBrandId} onBrandUpdated={async brand => { await load(); setBrandDraft(current => current.id === brand.id ? { ...brand } : current); if (brandDraft.id === brand.id) setLogoAssetIds(brandLogoAssetIds(brand)); }} />}
 
                 {activeTab === "brands" && <div className="space-y-9">
@@ -395,13 +403,13 @@ export function SocialStudio({ onBack }: Props) {
                                 <div className="mb-4 flex items-center justify-between px-2 pt-1"><span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55"><span className="h-1.5 w-1.5 rounded-full bg-[#c62828]" />Vista previa en vivo</span><span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-white/45">Concepto visual</span></div>
                                 <div className="relative flex min-h-[360px] flex-col justify-between overflow-hidden rounded-[22px] p-7 sm:min-h-[430px] sm:p-9" style={{ background: `linear-gradient(145deg, ${previewPrimary} 0%, #090909 80%)` }}>
                                     <div className="pointer-events-none absolute -right-20 top-1/4 h-64 w-64 rounded-full border-[42px] opacity-30" style={{ borderColor: previewAccent }} />
-                                    <div className="pointer-events-none absolute right-16 top-1/3 h-36 w-36 rounded-full blur-[65px]" style={{ backgroundColor: previewAccent, opacity: 0.35 }} />
-                                    <div className="relative flex items-start justify-between gap-4"><div className="flex items-center gap-3">{logoAssetIds[0] ? <img src={`/api/workflows/assets/${logoAssetIds[0]}`} alt="Logo de referencia" className="h-10 w-10 rounded-xl bg-neutral-500 object-contain p-1" /> : <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/25 bg-white/10 text-sm font-semibold" style={{ color: previewSecondary }}>{(brandDraft.name || "M").trim().slice(0, 1).toUpperCase()}</span>}<span className="max-w-[180px] truncate text-sm font-semibold tracking-wide" style={{ color: previewSecondary }}>{brandDraft.name || "Tu marca"}</span></div><ArrowUpRight size={20} style={{ color: previewAccent }} /></div>
-                                    <div className="relative max-w-[370px]"><span className="mb-4 inline-flex rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ borderColor: previewAccent, color: previewAccent }}>Identidad en movimiento</span><p className="text-4xl font-semibold leading-[1.06] tracking-[-0.05em] sm:text-5xl" style={{ color: previewSecondary, fontFamily: previewHeadingFont }}>Ideas que se<br /><span style={{ color: previewAccent }}>sienten</span> como marca.</p><p className="mt-5 line-clamp-3 max-w-xs text-xs leading-5 text-white/70" style={{ fontFamily: previewBodyFont }}>{brandDraft.voice || "Una voz única para cada idea."}</p><span className="mt-7 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold" style={{ backgroundColor: previewAccent, color: previewPrimary }}>Explorar ideas <ArrowUpRight size={13} /></span></div>
-                                    <div className="relative flex items-center justify-between border-t border-white/20 pt-4 text-[10px] uppercase tracking-[0.14em] text-white/65"><span>Design system</span><span>01 / 03</span></div>
+                                    <div className="pointer-events-none absolute right-0 top-1/3 h-64 w-64 rounded-full" style={{ background: "radial-gradient(circle, " + previewAccent + "40, transparent 70%)" }} />
+                                    <div className="relative flex items-start justify-between gap-4"><div className="flex items-center gap-3">{logoAssetIds[0] ? <img decoding="async" loading="lazy" src={`/api/workflows/assets/${logoAssetIds[0]}`} alt="Logo de referencia" className="h-10 w-10 rounded-xl bg-neutral-500 object-contain p-1" /> : <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/25 bg-white/10 text-sm font-semibold" style={{ color: previewSecondary }}>{(brandDraft.name || "M").trim().slice(0, 1).toUpperCase()}</span>}<span className="max-w-[180px] truncate text-sm font-semibold tracking-wide" style={{ color: previewSecondary }}>{brandDraft.name || "Tu marca"}</span></div><ArrowUpRight size={20} style={{ color: previewAccent }} /></div>
+                                    <div className="relative max-w-[370px]"><span className="mb-4 inline-flex rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ borderColor: previewAccent, color: previewAccent }}><span style={{ fontFamily: fontFamilyStyle(typography.subheadingFont) }}>Identidad en movimiento</span></span><p className="text-4xl font-semibold leading-[1.06] tracking-[-0.05em] sm:text-5xl" style={{ color: previewSecondary, fontFamily: previewHeadingFont }}>Ideas que se<br /><span style={{ color: previewAccent }}>sienten</span> como marca.</p><p className="mt-5 line-clamp-3 max-w-xs text-xs leading-5 text-white/70" style={{ fontFamily: previewBodyFont }}>{brandDraft.voice || "Una voz única para cada idea."}</p><span className="mt-7 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold" style={{ backgroundColor: previewAccent, color: previewPrimary }}>Explorar ideas <ArrowUpRight size={13} /></span></div>
+                                    <div className="relative flex items-center justify-between border-t border-white/20 pt-4 text-[10px] uppercase tracking-[0.14em] text-white/65"><span style={{ fontFamily: fontFamilyStyle(typography.secondaryBodyFont) }}>Texto de apoyo · Tu marca</span><span>01 / 04</span></div>
                                 </div>
                                 <div className="grid grid-cols-3 gap-2 px-1 pt-4">{colorFields.map(({ key, label }) => <div key={key} className="min-w-0"><div className="h-8 rounded-lg border border-white/10" style={{ backgroundColor: validColor(brandDraft[key], "#555555") }} /><p className="mt-2 truncate text-[10px] text-white/45">{label} · {brandDraft[key]}</p></div>)}</div>
-                                <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 px-1 pt-4"><span className="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-white/60">Aa · {brandDraft.headingFont || "Titulares"}</span><span className="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-white/60">Aa · {brandDraft.bodyFont || "Texto"}</span></div>
+                                <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 px-1 pt-4">{[["Título", typography.headingFont], ["Subtítulo", typography.subheadingFont], ["Texto 1", typography.bodyFont], ["Texto 2", typography.secondaryBodyFont]].map(([role, family]) => <span key={role} className="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-white/60">{role} · {family}</span>)}</div>
                             </div>
                             <p className="mt-3 px-2 text-xs leading-5 text-white/35">Esta muestra representa la dirección visual de la marca; las imágenes finales las genera el modelo elegido.</p>
                         </div>
@@ -409,19 +417,8 @@ export function SocialStudio({ onBack }: Props) {
                         <form id="brand-editor" onSubmit={saveBrand} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#0d0d0d]">
                             <div className="border-b border-white/10 px-5 py-6 sm:px-7"><div className="flex items-start justify-between gap-4"><div><p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.17em] text-[#ff4d4d]">{brandDraft.id ? "Sistema existente" : "Nuevo sistema"}</p><h3 className="text-xl font-semibold tracking-tight">{brandDraft.id ? "Edita tu identidad" : "Construye tu identidad"}</h3><p className="mt-1 text-sm text-white/45">Cada detalle ayuda a mantener la coherencia en tus creaciones.</p></div><Palette className="mt-1 shrink-0 text-[#ff4d4d]" size={21} /></div></div>
                             <div className="space-y-7 p-5 sm:p-7">
-                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">01</span><h4 className="text-sm font-semibold">Esencia de marca</h4><span className="h-px flex-1 bg-white/10" /></div><label className={labelClass}>Nombre de marca<input className={inputClass} required maxLength={80} value={brandDraft.name} onChange={event => updateBrand("name", event.target.value)} placeholder="Ej. Mi marca" /></label></div>
-                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">02</span><h4 className="text-sm font-semibold">Paleta de color</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-3 sm:grid-cols-3">{colorFields.map(({ key, label, caption }) => <div key={key} className="rounded-2xl border border-white/10 bg-white/[.025] p-3"><label className="block text-xs font-medium text-white/80" htmlFor={`${key}-picker`}>{label}<small className="mt-0.5 block text-[10px] font-normal text-white/40">{caption}</small></label><div className="mt-3 flex items-center gap-2"><input id={`${key}-picker`} aria-label={`Color ${label.toLowerCase()}`} type="color" className="h-10 w-10 shrink-0 cursor-pointer rounded-lg border border-white/10 bg-transparent p-0.5" value={validColor(brandDraft[key], "#000000")} onChange={event => updateBrand(key, event.target.value)} /><input aria-label={`Código del color ${label.toLowerCase()}`} className="min-w-0 w-full rounded-lg border border-white/10 bg-[#111111] px-2 py-2 text-xs text-white outline-none focus:border-[#ff4d4d]/60" value={brandDraft[key]} onChange={event => updateBrand(key, event.target.value)} /></div></div>)}</div></div>
-                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">03</span><h4 className="text-sm font-semibold">Lenguaje visual y verbal</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-4 sm:grid-cols-2"><label className={labelClass}>Tipografía de titulares<input className={inputClass} value={brandDraft.headingFont} onChange={event => updateBrand("headingFont", event.target.value)} /></label><label className={labelClass}>Tipografía de texto<input className={inputClass} value={brandDraft.bodyFont} onChange={event => updateBrand("bodyFont", event.target.value)} /></label><label className={`${labelClass} sm:col-span-2`}>Voz de marca<textarea className={`${inputClass} min-h-24 resize-y`} maxLength={500} value={brandDraft.voice} onChange={event => updateBrand("voice", event.target.value)} placeholder="¿Cómo habla tu marca?" /></label><label className={`${labelClass} sm:col-span-2`}>Reglas visuales<textarea id="brand-visual-rules" className={`${inputClass} min-h-28 resize-y`} maxLength={1000} value={brandDraft.visualRules} onChange={event => updateBrand("visualRules", event.target.value)} placeholder="Composición, estilo, elementos que deben mantenerse…" /></label></div></div>
-                                <BrandReferencesEditor references={brandDraft.references ?? []} disabled={busy} onChange={value => updateBrand("references", value)} onUpload={files => void addReferences(files)} onMention={name => {
-                                    const input = document.getElementById("brand-visual-rules") as HTMLTextAreaElement | null;
-                                    const current = brandDraft.visualRules; const at = input?.selectionStart ?? current.length;
-                                    const next = current.slice(0, at) + ` @${name} ` + current.slice(input?.selectionEnd ?? at);
-                                    if (next.length > 1000) { setError("Las reglas visuales admiten hasta 1000 caracteres."); return; }
-                                    updateBrand("visualRules", next); input?.focus();
-                                }} />
-                                <label className={labelClass}>Prompt negativo / Prohibiciones<textarea className={`${inputClass} min-h-28 resize-y`} rows={4} maxLength={2000} value={brandDraft.negativePrompt ?? ""} onChange={event => updateBrand("negativePrompt", event.target.value)} placeholder="Ej. No cambiar el logo. No usar degradados. No incluir precios inventados." /><span className="mt-2 block text-xs font-normal text-white/40">Se envían como instrucciones en cada generación. Son indicaciones para la IA, no una garantía automática.</span></label>
                                 <div>
-                                    <div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">04</span><h4 className="text-sm font-semibold">Logos de referencia</h4><span className="h-px flex-1 bg-white/10" /></div>
+                                    <div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">01</span><h4 className="text-sm font-semibold">Logos de referencia</h4><span className="h-px flex-1 bg-white/10" /></div>
                                     <label className={`${labelClass} block rounded-2xl border border-dashed border-white/15 bg-white/[.02] p-4 transition hover:border-[#ff4d4d]/40`}>
                                         <span className="flex items-center gap-2 text-sm text-white/75"><ImagePlus size={17} />Añadir logos ({logoAssetIds.length}/{MAX_BRAND_LOGOS})</span>
                                         <span className="mt-1 block text-xs font-normal text-white/40">PNG, JPG, WebP o AVIF. Se conserva la transparencia del PNG; el gris es solo para visualizarlo. Todos se envían como referencias al generar un posteo. Si el modelo no admite imágenes, se te avisará antes de generar.</span>
@@ -432,8 +429,21 @@ export function SocialStudio({ onBack }: Props) {
                                             void addLogos(files);
                                         }} />
                                     </label>
-                                    {logoAssetIds.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{logoAssetIds.map((id, index) => <div key={id} className="flex items-center gap-3 rounded-xl bg-white/5 p-3"><img src={`/api/workflows/assets/${id}`} alt={`Logo de referencia ${index + 1}`} className="h-12 w-12 rounded-lg bg-neutral-500 object-contain p-1" /><span className="min-w-0 flex-1 text-xs text-white/55">Logo {index + 1}</span><button type="button" className="text-xs text-white/50 hover:text-white" onClick={() => { setLogoAssetIds(current => current.filter(value => value !== id)); setBrandDraft(current => ({ ...current, logoVectorAssetId: undefined })); }}>Quitar</button></div>)}</div>}
+                                    {logoAssetIds.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{logoAssetIds.map((id, index) => <div key={id} className="flex items-center gap-3 rounded-xl bg-white/5 p-3"><img decoding="async" loading="lazy" src={`/api/workflows/assets/${id}`} alt={`Logo de referencia ${index + 1}`} className="h-12 w-12 rounded-lg bg-neutral-500 object-contain p-1" /><span className="min-w-0 flex-1 text-xs text-white/55">Logo {index + 1}</span><button type="button" className="text-xs text-white/50 hover:text-white" onClick={() => { setLogoAssetIds(current => current.filter(value => value !== id)); setBrandDraft(current => ({ ...current, logoVectorAssetId: undefined })); }}>Quitar</button></div>)}</div>}
                                 </div>
+                                <BrandReferencesEditor references={brandDraft.references ?? []} disabled={busy} onChange={value => updateBrand("references", value)} onUpload={files => void addReferences(files)} onMention={name => {
+                                    const input = document.getElementById("brand-visual-rules") as HTMLTextAreaElement | null;
+                                    const current = brandDraft.visualRules; const at = input?.selectionStart ?? current.length;
+                                    const next = current.slice(0, at) + ` @${name} ` + current.slice(input?.selectionEnd ?? at);
+                                    if (next.length > 1000) { setError("Las reglas visuales admiten hasta 1000 caracteres."); return; }
+                                    updateBrand("visualRules", next); input?.focus();
+                                }} />
+
+                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">03</span><h4 className="text-sm font-semibold">Esencia de marca</h4><span className="h-px flex-1 bg-white/10" /></div><label className={labelClass}>Nombre de marca<input className={inputClass} required maxLength={80} value={brandDraft.name} onChange={event => updateBrand("name", event.target.value)} placeholder="Ej. Mi marca" /></label></div>
+                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">04</span><h4 className="text-sm font-semibold">Paleta de color</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-3 sm:grid-cols-3">{colorFields.map(({ key, label, caption }) => <div key={key} className="rounded-2xl border border-white/10 bg-white/[.025] p-3"><label className="block text-xs font-medium text-white/80" htmlFor={`${key}-picker`}>{label}<small className="mt-0.5 block text-[10px] font-normal text-white/40">{caption}</small></label><div className="mt-3 flex items-center gap-2"><input id={`${key}-picker`} aria-label={`Color ${label.toLowerCase()}`} type="color" className="h-10 w-10 shrink-0 cursor-pointer rounded-lg border border-white/10 bg-transparent p-0.5" value={validColor(brandDraft[key], "#000000")} onChange={event => updateBrand(key, event.target.value)} /><input aria-label={`Código del color ${label.toLowerCase()}`} className="min-w-0 w-full rounded-lg border border-white/10 bg-[#111111] px-2 py-2 text-xs text-white outline-none focus:border-[#ff4d4d]/60" value={brandDraft[key]} onChange={event => updateBrand(key, event.target.value)} /></div></div>)}</div></div>
+                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">05</span><h4 className="text-sm font-semibold">Tipografías, voz y reglas</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-4 sm:grid-cols-2"><GoogleFontPicker label="Título principal" value={typography.headingFont} onChange={value => updateBrand("headingFont", value)} /><GoogleFontPicker label="Título secundario" value={typography.subheadingFont} onChange={value => updateBrand("subheadingFont", value)} /><GoogleFontPicker label="Texto 1 · Cuerpo principal" value={typography.bodyFont} onChange={value => updateBrand("bodyFont", value)} /><GoogleFontPicker label="Texto 2 · Apoyos y notas" value={typography.secondaryBodyFont} onChange={value => updateBrand("secondaryBodyFont", value)} /><p className="text-xs leading-5 text-white/40 sm:col-span-2">Busca familias de Google Fonts. La vista previa usa las fuentes seleccionadas; la IA recibe estos roles como instrucciones y puede aproximar la tipografía al generar.</p><label className={`${labelClass} sm:col-span-2`}>Voz de marca<textarea className={`${inputClass} min-h-24 resize-y`} maxLength={500} value={brandDraft.voice} onChange={event => updateBrand("voice", event.target.value)} placeholder="¿Cómo habla tu marca?" /></label><label className={`${labelClass} sm:col-span-2`}>Reglas visuales<textarea id="brand-visual-rules" className={`${inputClass} min-h-28 resize-y`} maxLength={1000} value={brandDraft.visualRules} onChange={event => updateBrand("visualRules", event.target.value)} placeholder="Composición, estilo, elementos que deben mantenerse…" /></label></div></div>
+                                <label className={labelClass}>Prompt negativo / Prohibiciones<textarea className={`${inputClass} min-h-28 resize-y`} rows={4} maxLength={2000} value={brandDraft.negativePrompt ?? ""} onChange={event => updateBrand("negativePrompt", event.target.value)} placeholder="Ej. No cambiar el logo. No usar degradados. No incluir precios inventados." /><span className="mt-2 block text-xs font-normal text-white/40">Se envían como instrucciones en cada generación. Son indicaciones para la IA, no una garantía automática.</span></label>
+
                             </div>
                             <div className="flex flex-wrap gap-2 border-t border-white/10 bg-white/[.02] p-5 sm:p-7"><button disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-[#c62828] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#ad1f1f] disabled:opacity-50"><Save size={16} />{busy ? "Guardando…" : brandDraft.id ? "Guardar cambios" : "Guardar sistema"}</button><button type="button" onClick={() => { setBrandDraft({ ...blankBrand }); setLogoAssetIds([]); }} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-white/65 transition hover:border-white/25 hover:text-white">Limpiar</button><label className="cursor-pointer rounded-xl border border-white/10 px-4 py-3 text-sm text-white/65 transition hover:border-white/25 hover:text-white">Importar JSON<input className="sr-only" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) void importBrand(file); event.target.value = ""; }} /></label></div>
                         </form>
@@ -455,7 +465,7 @@ export function SocialStudio({ onBack }: Props) {
                     {project && <div className="rounded-2xl border border-white/10 bg-[#0d0d0d] p-5 sm:p-6">
                         <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold">{project.name}</h3><p className="mt-1 text-xs text-white/45">{formatLabels[project.format]} · {project.status === "completed" ? "Completado" : project.status}</p></div><div className="flex flex-wrap gap-2">{project.format === "carousel" && (project.slides ? <><a href={`?mode=carousel&carousel=${project.id}`} className="inline-flex items-center gap-1 rounded-lg border border-[#ff4d4d]/30 px-3 py-2 text-xs text-[#ff4d4d]">Abrir carrusel</a><a href={`/api/social/carousels/${project.id}/export?format=zip`} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:text-white"><Download size={13} />ZIP</a><a href={`/api/social/carousels/${project.id}/export?format=pdf`} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:text-white"><Download size={13} />PDF</a></> : <><button type="button" onClick={() => void exportProjectZip()} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:text-white"><Download size={13} />ZIP</button><button type="button" onClick={exportProjectPdf} className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:text-white">Imprimir PDF</button></>)}</div></div>
                         {project.brief && <p className="mb-4 rounded-xl bg-white/[.03] p-3 text-sm text-white/55">{project.brief}</p>}
-                        {projectTasks.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{projectTasks.flatMap(task => (task.result_urls ?? []).map((url, index) => <a key={`${task.task_id}-${index}`} href={url} download target="_blank" rel="noreferrer" className="group relative block overflow-hidden rounded-xl border border-white/10 bg-black"><img src={url} alt={`Resultado ${index + 1}`} className="aspect-[4/5] w-full object-cover" /><span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/65 py-2 text-[10px] opacity-0 transition group-hover:opacity-100"><Download size={12} />Descargar</span></a>))}</div> : <p className="rounded-xl border border-dashed border-white/10 p-5 text-sm text-white/45">Este proyecto todavía no tiene imágenes disponibles.</p>}
+                        {projectTasks.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{projectTasks.flatMap(task => (task.result_urls ?? []).map((url, index) => <a key={`${task.task_id}-${index}`} href={url} download target="_blank" rel="noreferrer" className="group relative block overflow-hidden rounded-xl border border-white/10 bg-black"><img decoding="async" loading="lazy" src={url} alt={`Resultado ${index + 1}`} className="aspect-[4/5] w-full object-cover" /><span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/65 py-2 text-[10px] opacity-0 transition group-hover:opacity-100"><Download size={12} />Descargar</span></a>))}</div> : <p className="rounded-xl border border-dashed border-white/10 p-5 text-sm text-white/45">Este proyecto todavía no tiene imágenes disponibles.</p>}
                         {projectTasks.some(task => !task._done) && <p className="mt-3 text-xs text-white/50">El proveedor sigue generando algunas imágenes.</p>}
                         {projectTasks.some(task => task.error_message) && <p className="mt-2 text-xs text-red-200">{projectTasks.find(task => task.error_message)?.error_message}</p>}
                         <button type="button" onClick={() => void refreshTasks()} className="mt-4 w-full rounded-xl border border-white/10 py-2 text-xs text-white/60 hover:text-white">Actualizar resultados</button>

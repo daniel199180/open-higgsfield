@@ -17,7 +17,9 @@ const brandSchema = z.object({
     secondaryColor: z.string().regex(/^#[\da-fA-F]{6}$/),
     accentColor: z.string().regex(/^#[\da-fA-F]{6}$/),
     headingFont: z.string().trim().min(1).max(80),
+    subheadingFont: z.string().trim().min(1).max(80).optional(),
     bodyFont: z.string().trim().min(1).max(80),
+    secondaryBodyFont: z.string().trim().min(1).max(80).optional(),
     voice: z.string().trim().max(500),
     visualRules: z.string().trim().max(1000),
     negativePrompt: z.string().trim().max(2000).optional(),
@@ -44,7 +46,8 @@ export async function GET(req: NextRequest) {
     try {
         const store = workflowStore();
         const [brands, projects, assets] = await Promise.all([
-            store.list<BrandSystem>("brand:"), store.list<SocialProject>("social:"), store.list<Asset>("asset:"),
+            store.list<BrandSystem>("brand:"), store.list<SocialProject>("social:"),
+            req.nextUrl.searchParams.get("includeAssets") === "0" ? Promise.resolve([] as Asset[]) : store.list<Asset>("asset:"),
         ]);
         return NextResponse.json({
             brands: brands.sort((a, b) => b.updatedAt - a.updatedAt),
@@ -86,6 +89,8 @@ export async function POST(req: NextRequest) {
                 if (!previous && [...docs.keys()].filter(key => key.startsWith("brand:")).length >= 50) throw new WorkflowError("Alcanzaste el límite de sistemas de diseño.", 409);
                 const now = Date.now();
                 const brand: BrandSystem = { ...input.brand, references, negativePrompt: input.brand.negativePrompt ?? previous?.negativePrompt ?? "", logoAssetIds, logoAssetId: logoAssetIds[0], id: previous?.id ?? crypto.randomUUID(), createdAt: previous?.createdAt ?? now, updatedAt: now };
+                brand.subheadingFont = input.brand.subheadingFont ?? previous?.subheadingFont ?? input.brand.headingFont;
+                brand.secondaryBodyFont = input.brand.secondaryBodyFont ?? previous?.secondaryBodyFont ?? input.brand.bodyFont;
                 docs.set(`brand:${brand.id}`, brand);
                 return brand;
             });

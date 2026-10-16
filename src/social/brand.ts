@@ -5,8 +5,19 @@ export const MAX_BRAND_REFERENCES = 6;
 
 /** Whitelist editable fields: persisted timestamps are not accepted by the API. */
 export function brandSaveInput(brand: Omit<BrandSystem, "id" | "createdAt" | "updatedAt"> & { id?: string }) {
-    const { id, name, primaryColor, secondaryColor, accentColor, headingFont, bodyFont, voice, visualRules, negativePrompt, references, logoAssetId, logoAssetIds, logoVectorAssetId } = brand;
-    return { id, name, primaryColor, secondaryColor, accentColor, headingFont, bodyFont, voice, visualRules, negativePrompt, references, logoAssetId, logoAssetIds, logoVectorAssetId };
+    const { id, name, primaryColor, secondaryColor, accentColor, headingFont, subheadingFont, bodyFont, secondaryBodyFont, voice, visualRules, negativePrompt, references, logoAssetId, logoAssetIds, logoVectorAssetId } = brand;
+    return { id, name, primaryColor, secondaryColor, accentColor, headingFont, subheadingFont, bodyFont, secondaryBodyFont, voice, visualRules, negativePrompt, references, logoAssetId, logoAssetIds, logoVectorAssetId };
+}
+
+/** Older brands inherit their existing heading/body families without a migration. */
+export function brandTypography(brand: Pick<BrandSystem, "headingFont" | "subheadingFont" | "bodyFont" | "secondaryBodyFont">) {
+    return { headingFont: brand.headingFont, subheadingFont: brand.subheadingFont || brand.headingFont,
+        bodyFont: brand.bodyFont, secondaryBodyFont: brand.secondaryBodyFont || brand.bodyFont };
+}
+
+export function brandTypographyPrompt(brand: BrandSystem): string {
+    const fonts = brandTypography(brand);
+    return `Tipografías: título principal ${fonts.headingFont}; título secundario ${fonts.subheadingFont}; texto 1 (cuerpo principal) ${fonts.bodyFont}; texto 2 (apoyos y notas) ${fonts.secondaryBodyFont}. Mantén esta jerarquía tipográfica.`;
 }
 
 export function brandImageAssetIds(brand: BrandSystem): string[] {
@@ -23,7 +34,7 @@ export function brandIdentityPrompt(brand: BrandSystem): string {
     return [
         `Identidad visual de marca: ${brand.name}.`,
         `Colores: principal ${brand.primaryColor}; secundario ${brand.secondaryColor}; acento ${brand.accentColor}.`,
-        `Tipografías: títulos ${brand.headingFont}; cuerpo ${brand.bodyFont}.`,
+        brandTypographyPrompt(brand),
         brand.voice ? `Tono: ${brand.voice}.` : "",
         brand.visualRules ? `Reglas visuales: ${brand.visualRules}.` : "",
         ...(brand.references ?? []).map(item => `@${item.name}: imagen de inspiración adjunta y rotulada @${item.name}. Aplica las reglas que la mencionan; no copies sus textos, logos ni la etiqueta de referencia salvo petición explícita.`),

@@ -26,6 +26,11 @@ test("design systems persist references and prohibitions, validate mentions, and
     assert.equal((await post(draft, "")).status, 401);
     const created = await post(draft); assert.equal(created.status, 200);
     const saved = (await created.json()).brand;
+    assert.equal(saved.subheadingFont, draft.headingFont);
+    assert.equal(saved.secondaryBodyFont, draft.bodyFont);
+    const fourFonts = await post(brandSaveInput({ ...saved, subheadingFont: "Oswald", secondaryBodyFont: "Lora" }));
+    assert.equal(fourFonts.status, 200);
+    Object.assign(saved, (await fourFonts.json()).brand);
     const edited = await post(brandSaveInput({ ...saved, name: "Editada" })); assert.equal(edited.status, 200);
     assert.deepEqual((await edited.json()).brand.references, draft.references);
     assert.equal((await post({ ...draft, references: [...draft.references, ...draft.references] })).status, 400);
@@ -34,9 +39,29 @@ test("design systems persist references and prohibitions, validate mentions, and
     assert.equal((await post({ ...draft, references: [{ name: "<script>", assetId: image.id }] })).status, 400);
     assert.equal((await post({ ...draft, negativePrompt: "x".repeat(2001) })).status, 400);
     // An older client omitting the new fields must not erase them.
-    const legacy = brandSaveInput(saved); delete legacy.references; delete legacy.negativePrompt;
+    const legacy = brandSaveInput(saved); delete legacy.references; delete legacy.negativePrompt; delete legacy.subheadingFont; delete legacy.secondaryBodyFont;
     assert.equal((await post(legacy)).status, 200);
     const reloaded = await GET(new NextRequest("http://localhost:3000/api/social", { headers }));
     const brand = (await reloaded.json()).brands.find((item: { id: string }) => item.id === saved.id);
     assert.deepEqual(brand.references, draft.references); assert.equal(brand.negativePrompt, draft.negativePrompt);
+    assert.equal(brand.subheadingFont, "Oswald"); assert.equal(brand.secondaryBodyFont, "Lora");
+    assert.equal((await post({ ...draft, subheadingFont: "" })).status, 400);
+    assert.equal((await post({ ...draft, secondaryBodyFont: "x".repeat(81) })).status, 400);
+    const light = await GET(new NextRequest("http://localhost:3000/api/social?includeAssets=0", { headers }));
+    const lightweight = await light.json();
+    assert.deepEqual(lightweight.assets, []); assert.equal(lightweight.brands.length, 1);
+    // The font catalogue is authenticated and coalesces parallel requests.
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return new Response(JSON.stringify({ familyMetadataList: [{ family: "Inter" }, { family: "Montserrat" }] })); }) as typeof fetch;
+    try {
+        const { GET: fonts } = await import("../src/app/api/fonts/route");
+        assert.equal((await fonts(new NextRequest("http://localhost:3000/api/fonts"))).status, 401);
+        assert.equal(calls, 0);
+        const results = await Promise.all([fonts(new NextRequest("http://localhost:3000/api/fonts", { headers })), fonts(new NextRequest("http://localhost:3000/api/fonts", { headers }))]);
+        assert.equal(calls, 1);
+        assert.deepEqual((await results[0].json()).families, ["Inter", "Montserrat"]);
+        await fonts(new NextRequest("http://localhost:3000/api/fonts", { headers }));
+        assert.equal(calls, 1);
+    } finally { globalThis.fetch = originalFetch; }
 });

@@ -15,6 +15,7 @@ import { saveDownload } from "@/lib/upload";
 import type { ModelCapabilities } from "@/models/capabilities/types";
 import { getCatalog } from "@/providers/catalog";
 import { providerFetch } from "@/providers/secure-fetch";
+import { providerImageReference } from "@/lib/image-reference";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -253,11 +254,12 @@ async function editImage(req: NextRequest) {
             operation === "erase" ? "Remove the object(s) inside every red painted area and reconstruct the background naturally. Keep all other content unchanged." : "",
             guide ? "The first image is the original. The second is a guide with red painted areas and/or numbered markers. Use it only to locate changes. Do not include paint, markers or numbers in the output. Preserve unrelated parts as closely as possible. Any later image is an additional visual reference." : "Use the supplied image as the original. Preserve unrelated parts as closely as possible.",
         ].filter(Boolean).join("\n\n");
+        const asReference = (data: Buffer) => providerImageReference(provider, data, "image/png", capability.provider_model_id);
         const imageMedia = {
-            source: `data:image/png;base64,${source.png.toString("base64")}`,
-            ...(guide ? { region_guide: `data:image/png;base64,${guide.toString("base64")}` } : {}),
-            ...(reference ? { reference: `data:image/png;base64,${reference.png.toString("base64")}` } : {}),
-            ...(provider === "openai" && mask ? { mask: `data:image/png;base64,${mask.toString("base64")}` } : {}),
+            source: await asReference(source.png),
+            ...(guide ? { region_guide: await asReference(guide) } : {}),
+            ...(reference ? { reference: await asReference(reference.png) } : {}),
+            ...(provider === "openai" && mask ? { mask: await asReference(mask) } : {}),
         };
         const openAiSize = { auto: "auto", "1:1": "1024x1024", "3:2": "1536x1024", "2:3": "1024x1536" }[effectiveAspectRatio] ?? "auto";
         const taskId = await submitGeneration({

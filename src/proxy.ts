@@ -8,7 +8,9 @@ export default async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname;
     if (pathname.startsWith("/api/")) {
         try {
-            if (pathname !== "/api/health") {
+            const signedProviderInput = (request.method === "GET" || request.method === "HEAD") &&
+                /^\/api\/provider-input\/[0-9a-f-]{36}\.(?:jpg|png|webp|mp4|webm|mov|mp3|wav|m4a)$/i.test(pathname);
+            if (pathname !== "/api/health" && !signedProviderInput) {
                 const denied = pathname === "/api/admin/auth" ? checkOrigin(request) : await authorizeRequest(request);
                 if (denied) { denied.headers.set("Cache-Control", "no-store"); return denied; }
             }

@@ -212,7 +212,7 @@ export function ImageResizePanel({ sourceTaskId, sourceIndex, sourceModelId, pro
           {compatibleModels.map((item) => <option key={item.id} value={item.id}>{item.group} · {item.label}</option>)}
         </select>
         <p className="mt-2 text-[11px] text-white/45">Solo aparecen modelos que admiten una imagen de referencia y proporciones definidas.</p>
-        {model && !["openrouter", "google-ai-studio", "google-vertex"].includes(model.provider ?? "freepik") && <p className="mt-2 text-[11px] leading-relaxed text-red-200/80">Este proveedor necesita Cloudinary configurado para recibir la imagen de referencia.</p>}
+        {model && !["openrouter", "google-ai-studio", "google-vertex"].includes(model.provider ?? "freepik") && <p className="mt-2 text-[11px] leading-relaxed text-white/45">Si este modelo exige una URL, la referencia se enviará mediante un enlace temporal protegido del servidor.</p>}
 
         <p className="mt-4 text-xs font-semibold text-white/75">Formatos de salida</p>
         <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="Formatos de salida">

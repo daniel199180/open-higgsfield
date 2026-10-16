@@ -63,7 +63,7 @@ HIGGSFIELD_API_KEY=
 HIGGSFIELD_BASE_URL=https://api.higgsfield.ai
 ```
 
-Higgsfield model paths and model-specific fields are normalized into the same image/video generation flow. Reference uploads still require a public URL provider such as Cloudinary when the selected endpoint cannot access local files.
+Higgsfield model paths and model-specific fields are normalized into the same image/video generation flow. Endpoints that cannot accept inline media receive a signed, expiring reference URL from this application's public HTTPS origin.
 
 ## API.market
 
@@ -82,13 +82,7 @@ Saved connections are encrypted under `OPEN_HIGGSFIELD_STORAGE_DIR` with an auto
 
 ## Reference media uploads
 
-Some providers require a public URL for asynchronous image/video inputs. Open-Higgsfield uses Cloudinary for this handoff.
-
-```dotenv
-CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
-```
-
-You can alternatively configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` separately.
+Some providers require a public URL for asynchronous image/video inputs. On self-hosted deployments, Open-Higgsfield stores those inputs on the persistent volume and serves only a signed URL valid for 24 hours under `OPEN_HIGGSFIELD_APP_ORIGIN`. A provider can fetch that URL without an admin cookie. Supported image models receive data URIs directly instead. URL-only models cannot fetch localhost; configure a public HTTPS address or choose an inline-capable model.
 
 ## Adding a model
 

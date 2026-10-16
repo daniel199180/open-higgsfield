@@ -28,6 +28,7 @@ export function securityError(error: unknown): NextResponse {
         ERR_APIMART_REQUEST_FAILED: [502, "APIMart rechazó la solicitud. Revisa el modelo y las opciones compatibles."],
         ERR_APIMART_MISSING_TASK_ID: [502, "APIMart no devolvió un identificador de tarea."],
         ERR_APIMART_INVALID_TASK_RESPONSE: [502, "APIMart devolvió una tarea sin archivos generados."],
+        ERR_PUBLIC_REFERENCE_ORIGIN_REQUIRED: [503, "Este modelo necesita una URL HTTPS pública para leer archivos de referencia. Configura OPEN_HIGGSFIELD_APP_ORIGIN con el dominio accesible del servicio o usa un modelo que admita archivos directos."],
         ERR_LEGACY_VAULT_KEY_REQUIRED: [503, "Hace falta la clave original para migrar las conexiones existentes. No se han modificado."],
         ERR_VAULT_KEY_MISSING: [503, "Falta la clave de cifrado. Restaura la copia de seguridad del servidor."],
     };

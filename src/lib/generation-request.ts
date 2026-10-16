@@ -31,7 +31,11 @@ export async function generationEndpoint(req: NextRequest, handler: (req: NextRe
         let response: NextResponse;
         try {
             response = await handler(new NextRequest(req.url, { method: "POST", headers: req.headers, body: Buffer.from(bytes) }));
-        } catch { response = NextResponse.json({ error: "No se pudo completar la generación. Revisa el historial antes de reintentar." }, { status: 500 }); }
+        } catch (error) {
+            response = error instanceof Error && error.message === "ERR_PUBLIC_REFERENCE_ORIGIN_REQUIRED"
+                ? securityError(error)
+                : NextResponse.json({ error: "No se pudo completar la generación. Revisa el historial antes de reintentar." }, { status: 500 });
+        }
         const body = await response.clone().json();
         await withSecurityLock("generation", async () => {
             const entries = await readJson<Record<string, Entry>>(file) ?? {};

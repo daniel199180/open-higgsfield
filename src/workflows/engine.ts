@@ -200,10 +200,10 @@ export async function processWorkflowStep(deps: Dependencies = {}): Promise<bool
                         const providerId = cap.provider ?? "openrouter";
                         const resolve = deps.reference ?? referenceValue;
                         const references = referenceSlot.multiple
-                            ? await Promise.all(referenceIds.map(id => context?.referenceLabels?.[id] ? referenceSheetValue([id], providerId, referenceSlot.accept, context.referenceLabels) : resolve(id, providerId, referenceSlot.accept)))
+                            ? await Promise.all(referenceIds.map(id => context?.referenceLabels?.[id] ? referenceSheetValue([id], providerId, referenceSlot.accept, context.referenceLabels, cap.provider_model_id) : resolve(id, providerId, referenceSlot.accept, cap.provider_model_id)))
                             : [referenceIds.length === 1
-                                ? context?.referenceLabels?.[referenceIds[0]] ? await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context.referenceLabels) : await resolve(referenceIds[0], providerId, referenceSlot.accept)
-                                : await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context?.referenceLabels)];
+                                ? context?.referenceLabels?.[referenceIds[0]] ? await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context.referenceLabels, cap.provider_model_id) : await resolve(referenceIds[0], providerId, referenceSlot.accept, cap.provider_model_id)
+                                : await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context?.referenceLabels, cap.provider_model_id)];
                         media.images = { [referenceSlot.id]: referenceSlot.multiple ? references as unknown as string : references[0] };
                     }
                 }
@@ -251,7 +251,7 @@ export async function processWorkflowStep(deps: Dependencies = {}): Promise<bool
                     const slot = cap.media_slots.find(s => `slot:${s.id}` === edge.targetHandle);
                     if (!input?.assetIds?.[0] || !slot) throw new WorkflowError("Imagen de entrada no disponible.");
                     media.images ??= {};
-                    media.images[slot.id] = await (deps.reference ?? referenceValue)(input.assetIds[0], cap.provider ?? "freepik", slot.accept);
+                    media.images[slot.id] = await (deps.reference ?? referenceValue)(input.assetIds[0], cap.provider ?? "freepik", slot.accept, cap.provider_model_id);
                 }
                 // Commit the uncertain boundary BEFORE any billable provider request.
                 let allowed = false;

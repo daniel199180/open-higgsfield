@@ -10,6 +10,8 @@ import { WorkflowError, type Workflow, type WorkflowRun, type WorkflowGraph, typ
 import type { BrandSystem } from "@/social/types";
 import { brandLogoAssetIds, brandImageAssetIds } from "@/social/brand";
 import { angleFormats, angleFormatKey, angleKey, anglePrompt } from "./sales-angles";
+import { publicReferenceOrigin } from "@/lib/provider-input";
+import { acceptsInlineImageReference } from "@/lib/image-reference";
 
 export async function saveWorkflow(input: { id?: string; revision?: number; name: string; graph: WorkflowGraph }): Promise<Workflow> {
     const graph = validateGraph(input.graph);
@@ -100,16 +102,19 @@ export async function prepareRun(graph: WorkflowGraph) {
     validateRunnable(graph, capabilities);
     const needsHostedReferences = graph.edges.some(e => {
         const cap = capabilities[e.target];
-        return e.targetHandle.startsWith("slot:") && cap && !["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(cap.provider ?? "freepik") && cap.media_slots.find(s => `slot:${s.id}` === e.targetHandle)?.accept !== "b64_only";
+        return e.targetHandle.startsWith("slot:") && cap && !acceptsInlineImageReference(cap.provider, cap.provider_model_id) && cap.media_slots.find(s => `slot:${s.id}` === e.targetHandle)?.accept !== "b64_only";
     }) || Object.entries(angleContexts).some(([key, context]) => {
         const cap = capabilities[key];
         const slot = cap?.media_slots.find(item => item.kind === "image" && !item.required);
         const [nodeId, angleId] = key.split(":");
         const angle = graph.nodes.find(node => node.id === nodeId)?.config.angles?.find(item => item.id === angleId);
         const usesReference = !!context.referenceAssetIds?.length || !!context.logoAssetIds?.length || !!context.logoAssetId || !!angle && angleFormats(angle).length > 1;
-        return usesReference && !!slot && !["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(cap.provider ?? "freepik") && slot.accept !== "b64_only";
+        return usesReference && !!slot && !acceptsInlineImageReference(cap.provider, cap.provider_model_id) && slot.accept !== "b64_only";
     });
-    if (needsHostedReferences && !process.env.CLOUDINARY_URL && !(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)) throw new WorkflowError("Este proveedor necesita subir las referencias a Cloudinary. Configura el almacenamiento o usa OpenRouter, que admite imágenes locales.");
+    if (needsHostedReferences) {
+        try { publicReferenceOrigin(); }
+        catch { throw new WorkflowError("Este modelo necesita una URL HTTPS pública para sus referencias. Configura OPEN_HIGGSFIELD_APP_ORIGIN con el dominio accesible del servicio o elige un modelo que admita imágenes directas."); }
+    }
     return { capabilities, angleContexts };
 }
 

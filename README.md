@@ -97,7 +97,7 @@ See [Providers and models](docs/providers.md) for credentials, provider behavior
 - React 19, strict TypeScript, Tailwind CSS 4, and Framer Motion
 - Capability-driven model catalog and provider-neutral generation contracts
 - Freepik API, Google Gen AI SDK, Vertex AI, and Vercel AI Gateway
-- Cloudinary handoff for workflows that require public reference-media URLs
+- Signed, expiring reference-media URLs on self-hosted deployments
 - PostgreSQL/Neon image history with a local filesystem fallback
 
 ## Architecture
@@ -130,7 +130,7 @@ See [Architecture](docs/architecture.md) for the complete request lifecycle and 
 - Node.js 22+
 - npm 10+
 - At least one supported provider credential
-- Cloudinary credentials only when a workflow requires public reference-media URLs
+- A public HTTPS origin and persistent storage for models requiring reference URLs
 
 ### 1. Clone and install
 
@@ -163,8 +163,8 @@ GOOGLE_SERVICE_ACCOUNT_JSON=
 # Vercel AI Gateway
 AI_GATEWAY_API_KEY=
 
-# Reference-media uploads
-CLOUDINARY_URL=
+# Public HTTPS address for URL-only reference models in production
+OPEN_HIGGSFIELD_APP_ORIGIN=https://studio.example.com
 ```
 
 Never use `NEXT_PUBLIC_` for provider credentials. Open-Higgsfield reads them only from server-side modules.

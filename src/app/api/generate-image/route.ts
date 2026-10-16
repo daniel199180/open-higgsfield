@@ -1,13 +1,13 @@
 import { requireAdminRequest } from "@/lib/api-security";
 import { generationEndpoint } from "@/lib/generation-request";
-import { toJpeg } from "@/lib/media-upload";
+import { normalizeImageReference } from "@/lib/media-upload";
 import { NextRequest, NextResponse } from "next/server";
 import { getImageAdapter } from "@/models/adapters/image";
 import { getImageAspectRatios, requiresImageAspectRatio } from "@/models/capabilities/image-helpers";
 import { findCapability } from "@/providers/catalog";
 import type { ImageModelCapability } from "@/models/capabilities/image";
 import { saveInputLocally } from "@/lib/upload";
-import { imageReferenceForProvider } from "@/lib/image-reference";
+import { providerImageReference } from "@/lib/image-reference";
 import { submitGeneration } from "@/lib/generation-service";
 import { publicErrorMessage } from "@/lib/public-error";
 import type { CanonicalParams, CanonicalMediaInputs } from "@/models/canonical";
@@ -132,6 +132,7 @@ async function generate(req: NextRequest) {
     ...(imageCaps.has_edit_variant ? ["reference_images"] : []),
   ];
 
+  try {
   for (const slotId of allSlotIds) {
     const files: File[] = [];
     const formEntries = form.getAll(`slot_${slotId}`);
@@ -143,11 +144,10 @@ async function generate(req: NextRequest) {
     const slot = caps.media_slots.find((s) => s.id === slotId);
     const converted: string[] = [];
     for (const file of files) {
-      const buf = await toJpeg(Buffer.from(await file.arrayBuffer()));
-      const ext = ".jpg";
-      const localUrl = await saveInputLocally(buf, ext);
+      const normalized = await normalizeImageReference(Buffer.from(await file.arrayBuffer()));
+      const localUrl = await saveInputLocally(normalized.data, normalized.extension);
       slotLocalUrls[slotId] = [...(slotLocalUrls[slotId] ?? []), localUrl];
-      const remoteUrl = await imageReferenceForProvider(caps.provider, buf);
+      const remoteUrl = await providerImageReference(caps.provider, normalized.data, normalized.mimeType, caps.provider_model_id);
       converted.push(remoteUrl);
     }
 
@@ -157,6 +157,18 @@ async function generate(req: NextRequest) {
         ? converted as unknown as string
         : converted[0],
     };
+  }
+  } catch (error) {
+    const code = publicErrorMessage(error);
+    const messages: Record<string, [number, string]> = {
+      ERR_PUBLIC_REFERENCE_ORIGIN_REQUIRED: [503, "Este modelo necesita una URL HTTPS pública para leer las imágenes de referencia. Configura OPEN_HIGGSFIELD_APP_ORIGIN con el dominio accesible del servicio o elige un modelo que admita imágenes directas."],
+      ERR_MEDIA_TOO_LARGE: [413, "Una imagen de referencia supera el tamaño permitido."],
+      ERR_INVALID_MEDIA_TYPE: [400, "Una imagen de referencia tiene un formato no admitido."],
+    };
+    const [status, message] = messages[code] ?? ((error as NodeJS.ErrnoException).code === "ENOSPC"
+      ? [507, "No hay espacio para preparar las referencias. No se envió la generación al proveedor."]
+      : [500, "No se pudieron preparar las referencias. No se envió la generación al proveedor."]);
+    return NextResponse.json({ error: message }, { status });
   }
 
   // Validate required slots

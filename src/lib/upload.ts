@@ -3,6 +3,7 @@ import path from "path";
 import { STORAGE_ROOT } from "@/lib/storage-paths";
 import crypto from "node:crypto";
 import { downloadPublicMedia } from "./media-download";
+import { publishProviderInput } from "./provider-input";
 
 function shortId() {
     return crypto.randomUUID();
@@ -19,53 +20,6 @@ const DOWNLOADS_VIDEOS_DIR = path.join(DOWNLOADS_DIR, "videos");
     await fs.mkdir(DOWNLOADS_IMAGES_DIR, { recursive: true }).catch(() => { });
     await fs.mkdir(DOWNLOADS_VIDEOS_DIR, { recursive: true }).catch(() => { });
 })();
-
-export async function uploadToTmpfiles(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
-    return uploadToCloudinary(buffer, filename, mimeType);
-}
-
-async function uploadToCloudinary(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
-    let cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    let apiKey = process.env.CLOUDINARY_API_KEY;
-    let apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-    // Support single CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
-    const cloudinaryUrl = process.env.CLOUDINARY_URL;
-    if (cloudinaryUrl) {
-        const m = cloudinaryUrl.match(/^cloudinary:\/\/([^:]+):([^@]+)@(.+)$/);
-        if (m) { apiKey = m[1]; apiSecret = m[2]; cloudName = m[3]; }
-    }
-
-    if (!cloudName || !apiKey || !apiSecret) {
-        throw new Error("ERR_CLOUDINARY_NOT_CONFIGURED");
-    }
-
-    const timestamp = Math.floor(Date.now() / 1000);
-    const folder = "open-higgsfield";
-
-    // Generate SHA-1 signature: sign "folder=...&timestamp=..." + apiSecret
-    const { createHash } = await import("crypto");
-    const signStr = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
-    const signature = createHash("sha1").update(signStr).digest("hex");
-
-    const formData = new FormData();
-    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
-    formData.append("file", blob, filename);
-    formData.append("api_key", apiKey);
-    formData.append("timestamp", String(timestamp));
-    formData.append("folder", folder);
-    formData.append("signature", signature);
-
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
-        method: "POST",
-        body: formData,
-    });
-    const data = await res.json() as { secure_url?: string; error?: { message: string } };
-    if (!res.ok || !data.secure_url) {
-        throw new Error(`ERR_CLOUDINARY_UPLOAD: ${data.error?.message ?? res.status}`);
-    }
-    return data.secure_url;
-}
 
 export async function saveInputLocally(buffer: Buffer, ext: string): Promise<string> {
     if (!/^\.(jpg|jpeg|png|webp|gif|avif|mp4|webm|mov|mp3|wav|m4a|ogg|bin)$/i.test(ext)) throw new Error("ERR_INVALID_MEDIA_TYPE");
@@ -113,7 +67,7 @@ export async function resolveLocalUpload(url: string): Promise<string> {
                 : ext === ".mp4" ? "video/mp4"
                     : ext === ".mp3" ? "audio/mpeg"
                         : "application/octet-stream";
-        return uploadToTmpfiles(buffer, path.basename(filename), mime);
+        return publishProviderInput(buffer, mime);
     }
     return url;
 }

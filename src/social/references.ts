@@ -4,7 +4,8 @@ import type { ImageModelCapability } from "@/models/capabilities/image";
 import type { MediaSlotCapability } from "@/models/capabilities/types";
 import { getEditVariant } from "@/models/capabilities/image-helpers";
 import { readAsset } from "@/workflows/assets";
-import { uploadToTmpfiles } from "@/lib/upload";
+import { publishProviderInput } from "@/lib/provider-input";
+import { acceptsInlineImageReference } from "@/lib/image-reference";
 import { WorkflowError } from "@/workflows/types";
 import { brandLogoAssetIds } from "./brand";
 import type { BrandSystem } from "./types";
@@ -45,7 +46,7 @@ export async function namedReferenceFile(data: Buffer, name: string): Promise<Fi
 }
 
 /** Keep all logos, and optionally the source creative, in one provider input. */
-export async function referenceSheetValue(assetIds: string[], provider: string, accept?: string, labels: Record<string, string> = {}): Promise<string> {
+export async function referenceSheetValue(assetIds: string[], provider: string, accept?: string, labels: Record<string, string> = {}, providerModelId?: string): Promise<string> {
     const files = await Promise.all(assetIds.map(async (id, index) => {
         const { asset, data } = await readAsset(id);
         if (asset.kind !== "image") throw new WorkflowError(`La referencia visual ${index + 1} ya no está disponible.`);
@@ -55,8 +56,8 @@ export async function referenceSheetValue(assetIds: string[], provider: string, 
     const sheet = files.length === 1 ? files[0] : await referenceSheet(files);
     const data = Buffer.from(await sheet.arrayBuffer());
     if (accept === "b64_only") return data.toString("base64");
-    if (["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(provider)) return `data:${sheet.type};base64,${data.toString("base64")}`;
-    return uploadToTmpfiles(data, "brand-reference-sheet.png", sheet.type);
+    if (acceptsInlineImageReference(provider, providerModelId)) return `data:${sheet.type};base64,${data.toString("base64")}`;
+    return publishProviderInput(data, sheet.type);
 }
 
 /** Add every saved logo before slot processing, including on carousel and format variants. */

@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { downloadPublicMedia } from "@/lib/media-download";
-import { uploadToTmpfiles } from "@/lib/upload";
+import { publishProviderInput } from "@/lib/provider-input";
+import { acceptsInlineImageReference } from "@/lib/image-reference";
 import type { GeneratedAsset } from "@/providers/types";
 import { workflowStore, WORKFLOW_DIR } from "./store";
 import { WorkflowError, type Asset } from "./types";
@@ -80,11 +81,11 @@ export async function persistGeneratedAssets(assets: GeneratedAsset[], kind: "im
     return ids;
 }
 
-export async function referenceValue(id: string, provider: string, accept?: string): Promise<string> {
+export async function referenceValue(id: string, provider: string, accept?: string, providerModelId?: string): Promise<string> {
     const { asset, data } = await readAsset(id);
     if (asset.kind !== "image") throw new WorkflowError("La entrada debe ser una imagen.");
-    if (provider === "openrouter" || provider.startsWith("google") || provider === "vercel-ai-gateway") return `data:${asset.mime};base64,${data.toString("base64")}`;
+    if (acceptsInlineImageReference(provider, providerModelId)) return `data:${asset.mime};base64,${data.toString("base64")}`;
     if (accept === "b64_only") return data.toString("base64");
     // URL-only legacy models retain the existing, explicitly configured upload service.
-    return uploadToTmpfiles(data, `${asset.id}.png`, asset.mime);
+    return publishProviderInput(data, asset.mime);
 }

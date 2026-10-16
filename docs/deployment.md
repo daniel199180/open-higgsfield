@@ -18,7 +18,7 @@ Do not expose provider keys through `NEXT_PUBLIC_*` variables.
 1. Import the GitHub repository into Vercel.
 2. Add only the credentials for the providers you want enabled.
 3. Add `DATABASE_URL` for persistent task history and generated images.
-4. Add Cloudinary credentials for reference media workflows.
+4. On self-hosted deployments, set `OPEN_HIGGSFIELD_APP_ORIGIN` to the public HTTPS origin and mount persistent storage for signed reference URLs. URL-only models cannot fetch a localhost URL; use a model with documented inline-image support locally.
 5. Point `openhiggs.techbe.me` to the deployment.
 6. Enable deployment protection while validating real provider calls.
 

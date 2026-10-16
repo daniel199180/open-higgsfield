@@ -4,7 +4,7 @@ import { authorizeRequest, limitRequest, readLimitedBody } from "@/lib/api-secur
 import { getConnectionForProvider } from "@/lib/connection-store";
 import { providerFetch } from "@/providers/secure-fetch";
 import { readAsset } from "@/workflows/assets";
-import { uploadToTmpfiles } from "@/lib/upload";
+import { publishProviderInput } from "@/lib/provider-input";
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError } from "@/workflows/types";
 import type { Character } from "@/social/types";
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
             const inputImages = await Promise.all(character.referenceAssetIds.map(async id => {
                 const { asset, data } = await readAsset(id);
                 if (asset.kind !== "image") throw new WorkflowError("Una foto del personaje ya no está disponible.", 400);
-                return { type: "image_url", image_url: await uploadToTmpfiles(data, `${id}.png`, asset.mime) };
+                return { type: "image_url", image_url: await publishProviderInput(data, asset.mime) };
             }));
             const response = await providerFetch("higgsfield", "https://api.higgsfield.ai/v1/custom-references", { method: "POST", headers, body: JSON.stringify({ name: character.name, model_version: "v2", input_images: inputImages }) });
             if (!response.ok) throw new WorkflowError(`Higgsfield rechazó el entrenamiento (${response.status}).`, 502);

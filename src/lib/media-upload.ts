@@ -2,7 +2,8 @@
  * Media upload utilities — shared between video and image route handlers.
  */
 import sharp from "sharp";
-import { saveInputLocally, uploadToTmpfiles, resolveLocalUpload, readDownload } from "@/lib/upload";
+import { saveInputLocally, resolveLocalUpload, readDownload } from "@/lib/upload";
+import { publishProviderInput } from "@/lib/provider-input";
 import { assertSafeRemoteUrl } from "@/lib/safe-url";
 import { getTask } from "@/lib/task-store";
 import { readAsset } from "@/workflows/assets";
@@ -16,6 +17,20 @@ export async function toJpeg(buffer: Buffer): Promise<Buffer> {
     return image.jpeg({ quality: 92 }).toBuffer();
 }
 
+/** Keep a logo's alpha channel instead of silently flattening it into JPEG. */
+export async function normalizeImageReference(buffer: Buffer): Promise<{ data: Buffer; mimeType: "image/png" | "image/jpeg"; extension: ".png" | ".jpg" }> {
+    if (buffer.length > 20 * 1024 * 1024) throw new Error("ERR_MEDIA_TOO_LARGE");
+    const image = sharp(buffer, { limitInputPixels: 40_000_000 });
+    const metadata = await image.metadata();
+    if (!["jpeg", "png", "webp", "gif", "avif"].includes(metadata.format || "")) throw new Error("ERR_INVALID_MEDIA_TYPE");
+    if (metadata.hasAlpha) {
+        const data = await image.rotate().png().toBuffer();
+        if (data.length > 20 * 1024 * 1024) throw new Error("ERR_MEDIA_TOO_LARGE");
+        return { data, mimeType: "image/png", extension: ".png" };
+    }
+    return { data: await image.rotate().jpeg({ quality: 92 }).toBuffer(), mimeType: "image/jpeg", extension: ".jpg" };
+}
+
 export interface ResolvedMedia {
     /** Remote URL suitable for API calls */
     remoteUrl: string;
@@ -27,7 +42,7 @@ export interface ResolvedMedia {
 export async function processImageUpload(buffer: Buffer): Promise<ResolvedMedia> {
     const jpeg = await toJpeg(buffer);
     const localUrl = await saveInputLocally(jpeg, ".jpg");
-    const remoteUrl = await uploadToTmpfiles(jpeg, "image.jpg", "image/jpeg");
+    const remoteUrl = await publishProviderInput(jpeg, "image/jpeg");
     return { remoteUrl, localUrl };
 }
 
@@ -45,7 +60,7 @@ export async function processFileUpload(
     if (!(mp4 && ["video/mp4", "video/quicktime", "audio/mp4"].includes(mimeType)) && !(webm && ["video/webm", "audio/webm"].includes(mimeType)) && !(wav && ["audio/wav", "audio/x-wav"].includes(mimeType)) && !(mp3 && mimeType === "audio/mpeg")) throw new Error("ERR_INVALID_MEDIA_TYPE");
     const ext = filename.includes(".") ? `.${filename.split(".").pop()}` : ".bin";
     const localUrl = await saveInputLocally(buffer, ext);
-    const remoteUrl = await uploadToTmpfiles(buffer, `file${ext}`, mimeType);
+    const remoteUrl = await publishProviderInput(buffer, mimeType);
     return { remoteUrl, localUrl };
 }
 

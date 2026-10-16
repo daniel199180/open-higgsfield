@@ -31,6 +31,7 @@ export function StudioShell() {
   const registerEditorGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveEditor.current = guard; }, []);
   const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
   const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
+    window.scrollTo(0, 0);
     setWorkspace(next);
     const url = new URL(window.location.href);
     if (next === "studio") url.searchParams.delete("workspace");
@@ -137,8 +138,10 @@ export function StudioShell() {
 
   if (!authenticated) return <main className="grid min-h-screen place-items-center bg-black p-4 text-white">{authenticated === null ? <p>Comprobando acceso…</p> : <AdminAccess onReady={() => setAuthenticated(true)} />}</main>;
 
+  const viewportWorkspace = workspace === "studio" || workspace === "workflows" || workspace === "social" || workspace === "editor" || workspace === "apis";
+
   return (
-    <div className="relative min-h-screen bg-black">
+    <div className={viewportWorkspace ? "relative h-dvh overflow-hidden bg-black" : "relative min-h-dvh bg-black"}>
       {workspace === "workflows" ? <WorkflowStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerWorkflowGuard} /> :
         workspace === "social" ? <SocialStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "characters" ? <CharacterStudio onBack={() => navigateWorkspace("studio")} /> :
@@ -146,7 +149,7 @@ export function StudioShell() {
         workspace === "prompts" ? <PromptLibraryStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerEditorGuard} /> :
         workspace === "apis" ? <AdminConnectionsPanel onBack={() => navigateWorkspace("studio")} /> :
-          <div className="relative h-screen overflow-hidden">
+          <div className="relative h-dvh overflow-hidden">
             {mode === "audio" ? <AudioStudio onModeChange={changeMode} /> : <>
               {mode === "logo" ? <LogoResults /> : mode === "carousel" ? <CarouselResults /> : <ResultsGrid mode={mode} />}
               <CommandBar mode={mode} onModeChange={changeMode} />

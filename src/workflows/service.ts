@@ -97,7 +97,7 @@ export async function prepareRun(graph: WorkflowGraph) {
                 if (brief) for (const format of angleFormats(angle)) canonicalParams({ ...node, config: { params: { [format.formatField]: format.format, ...(angle.resolution ? { resolution: angle.resolution } : {}) } } }, cap, [brief, angleContexts[key].prompt].join("\n\n"));
             }
         }
-        if (node.kind === "asset" && node.config.assetId && !(await workflowStore().read<Asset>(`asset:${node.config.assetId}`))) throw new WorkflowError("Una imagen de entrada ya no está disponible.");
+        if (node.kind === "asset" && node.config.assetId && (await workflowStore().read<Asset>(`asset:${node.config.assetId}`))?.kind !== "image") throw new WorkflowError("Una imagen de entrada ya no está disponible.");
     }
     validateRunnable(graph, capabilities);
     const needsHostedReferences = graph.edges.some(e => {

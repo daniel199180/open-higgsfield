@@ -28,7 +28,7 @@ export const templates = [
     { id: "image", name: "De una idea a una imagen", description: "Prompt → imagen → resultado. El punto de partida más sencillo.", badge: "IMAGEN" },
     { id: "video", name: "De imagen a video", description: "Genera una imagen, apruébala y dale movimiento con otro modelo.", badge: "IMAGEN + VIDEO" },
     { id: "audio", name: "Texto a locución", description: "Escribe un texto, elige una voz guardada y genera audio.", badge: "AUDIO" },
-    { id: "reference", name: "Transformar una referencia", description: "Sube una foto y conéctala a un modelo que admita imágenes.", badge: "REFERENCIA" },
+    { id: "reference", name: "Transformar una referencia", description: "Elige una imagen de la galería o súbela para transformarla con IA.", badge: "REFERENCIA" },
     { id: "demo", name: "Prueba sin créditos", description: "Texto → aprobación → resultado. Conoce el editor sin usar APIs.", badge: "SIN COSTE" },
 ] as const;
 

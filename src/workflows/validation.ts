@@ -107,7 +107,7 @@ export function validateRunnable(graph: WorkflowGraph, caps: Record<string, Mode
     for (const node of graph.nodes) {
         const incoming = graph.edges.filter(e => e.target === node.id);
         if (node.kind === "prompt" && !node.config.text?.trim()) throw new WorkflowError(`Escribe el texto de «${node.label}».`);
-        if (node.kind === "asset" && !node.config.assetId) throw new WorkflowError(`Sube una imagen en «${node.label}».`);
+        if (node.kind === "asset" && !node.config.assetId) throw new WorkflowError(`Elige una imagen de la galería o súbela en «${node.label}».`);
         if (node.kind === "audio" && (!node.config.voiceId || !node.config.modelId || (!incoming.some(edge => edge.targetHandle === "prompt") && !node.config.text?.trim()))) throw new WorkflowError(`Elige voz, modelo y texto en «${node.label}».`);
         if (["approval", "output"].includes(node.kind) && incoming.filter(e => e.targetHandle === "input").length !== 1) throw new WorkflowError(`Conecta la entrada de «${node.label}».`);
         if (node.kind === "salesAngles") {

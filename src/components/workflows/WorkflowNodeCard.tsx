@@ -25,7 +25,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<CanvasNode>) {
             <Handle type="source" position={Position.Right} id={`angle:${angle.id}`} style={{ top: 113 + index * 32, background: "#ff4d4d" }} />
         </div>)}</div>}
         {preview && (outputKind(node) === "audio" ? <audio className="nodrag wf-preview" src={`/api/workflows/assets/${preview}`} controls preload="none" /> : outputKind(node) === "video" ? <video className="nodrag wf-preview" src={`/api/workflows/assets/${preview}`} controls preload="metadata" /> : <img className="wf-preview" src={`/api/workflows/assets/${preview}`} alt="Resultado del bloque" />)}
-        {node.kind === "asset" && !preview && <div className="wf-placeholder"><Upload size={22} /><span>Selecciona y sube una imagen</span></div>}
+        {node.kind === "asset" && !preview && <div className="wf-placeholder"><Upload size={22} /><span>Elige una imagen de la galería o súbela</span></div>}
         {node.kind === "approval" && !state && <p className="wf-node-text">El flujo esperará tu aprobación.</p>}
         {node.kind === "manualTrigger" && !state && <p className="wf-node-text">Se activa al pulsar Ejecutar. No inicia automáticamente.</p>}
         {state && <div className={`wf-status wf-status-${state.status}`} role="status">{busy && <LoaderCircle size={13} className="animate-spin" />}{statusLabels[state.status]}{busy && state.startedAt && <span>{Math.max(0, Math.floor((now - state.startedAt) / 1000))} s</span>}</div>}

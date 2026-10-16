@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- authenticated gallery previews bypass the shared image optimizer */
 
 import { useEffect, useState } from "react";
 import { Check, Images, Loader2, Search } from "lucide-react";
@@ -16,9 +17,10 @@ interface GalleryImagePickerProps {
     onPick: (image: GalleryImage) => void;
     label?: string;
     compact?: boolean;
+    contained?: boolean;
 }
 
-export function GalleryImagePicker({ onPick, label = "Elegir de galería", compact = false }: GalleryImagePickerProps) {
+export function GalleryImagePicker({ onPick, label = "Elegir de galería", compact = false, contained = false }: GalleryImagePickerProps) {
     const [open, setOpen] = useState(false);
     const [images, setImages] = useState<GalleryImage[]>([]);
     const [query, setQuery] = useState("");
@@ -38,7 +40,6 @@ export function GalleryImagePicker({ onPick, label = "Elegir de galería", compa
 
     useEffect(() => {
         if (!open) return;
-        void load();
         const refresh = () => void load();
         window.addEventListener("open-higgsfield:gallery-updated", refresh);
         return () => window.removeEventListener("open-higgsfield:gallery-updated", refresh);
@@ -47,10 +48,10 @@ export function GalleryImagePicker({ onPick, label = "Elegir de galería", compa
     const filtered = images.filter(image => !query.trim() || image.title.toLocaleLowerCase("es").includes(query.trim().toLocaleLowerCase("es")));
 
     return <div className="relative">
-        <button type="button" onClick={() => setOpen(value => !value)} className={`${compact ? "h-7 px-2 text-[10px]" : "px-3 py-2 text-xs"} inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[.04] font-semibold text-white/75 transition hover:border-[#ff4d4d]/60 hover:text-white`}>
+        <button type="button" onClick={() => { if (!open) void load(); setOpen(!open); }} className={`${compact ? "h-7 px-2 text-[10px]" : "px-3 py-2 text-xs"} ${contained ? "w-full justify-center" : ""} inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[.04] font-semibold text-white/75 transition hover:border-[#ff4d4d]/60 hover:text-white`}>
             <Images size={compact ? 12 : 14} /> {label}
         </button>
-        {open && <div className={`${compact ? "mt-2 w-[min(290px,calc(100vw-64px))]" : "absolute left-0 top-11 z-30 w-[min(420px,calc(100vw-32px))]"} rounded-xl border border-white/15 bg-[#151515] p-3 shadow-2xl`}>
+        {open && <div className={`${contained ? "mt-2 w-full" : compact ? "mt-2 w-[min(290px,calc(100vw-64px))]" : "absolute left-0 top-11 z-30 w-[min(420px,calc(100vw-32px))]"} rounded-xl border border-white/15 bg-[#151515] p-3 shadow-2xl`}>
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2">
                 <Search size={13} className="text-white/40" />
                 <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar imagen…" className="w-full bg-transparent py-2 text-xs text-white outline-none placeholder:text-white/35" />

@@ -11,6 +11,7 @@ import { templates, templateGraph, blankWorkflowGraph, kindLabels, withManualTri
 import { WorkflowNodeCard, type CanvasNode } from "./WorkflowNodeCard";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GenerationPrice } from "@/components/studio/GenerationPrice";
+import { GalleryImagePicker, type GalleryImage } from "@/components/studio/GalleryImagePicker";
 import type { BrandSystem } from "@/social/types";
 import type { SavedVoice } from "@/audio/types";
 import { MAX_GENERATIONS, type SalesAngle } from "@/workflows/types";
@@ -37,7 +38,6 @@ export function WorkflowStudio({ onBack, registerBeforeLeave }: { onBack: () => 
     const [showTrash, setShowTrash] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<Workflow | null>(null);
     const [runs, setRuns] = useState<RunSummary[]>([]);
-    const [assets, setAssets] = useState<Asset[]>([]);
     const [models, setModels] = useState<Array<ModelCapabilities & { mediaType: "image" | "video" }>>([]);
     const [brands, setBrands] = useState<BrandSystem[]>([]);
     const [audioVoices, setAudioVoices] = useState<SavedVoice[]>([]);
@@ -75,8 +75,8 @@ export function WorkflowStudio({ onBack, registerBeforeLeave }: { onBack: () => 
     }, []);
 
     const refresh = useCallback(async () => {
-        const result = await api<{ workflows: Workflow[]; deletedWorkflows: Workflow[]; runs: RunSummary[]; assets: Asset[]; storage: string }>("/api/workflows");
-        setWorkflows(result.workflows); setDeletedWorkflows(result.deletedWorkflows); setRuns(result.runs); setAssets(result.assets); setStorage(result.storage);
+        const result = await api<{ workflows: Workflow[]; deletedWorkflows: Workflow[]; runs: RunSummary[]; storage: string }>("/api/workflows");
+        setWorkflows(result.workflows); setDeletedWorkflows(result.deletedWorkflows); setRuns(result.runs); setStorage(result.storage);
         return result;
     }, []);
     const updateUrl = (workflowId?: string, runId?: string) => {
@@ -161,9 +161,16 @@ export function WorkflowStudio({ onBack, registerBeforeLeave }: { onBack: () => 
     const newTemplate = async (id: string) => {
         if (!await leaveDraft()) return;
         const next = withManualTrigger(templateGraph(id));
-        const imageModel = models.find(m => m.mediaType === "image" && /banana|gemini.*image/i.test(m.label + m.provider_model_id));
+        const imageModels = models.filter(m => m.mediaType === "image");
+        const imageModel = id === "reference"
+            ? imageModels.find(m => /banana|gemini.*image/i.test(m.label + m.provider_model_id) && m.media_slots.some(slot => slot.kind === "image")) ?? imageModels.find(m => m.media_slots.some(slot => slot.kind === "image"))
+            : imageModels.find(m => /banana|gemini.*image/i.test(m.label + m.provider_model_id));
         const videoModel = models.find(m => m.mediaType === "video" && m.provider === "openrouter" && m.media_slots.some(s => s.id === "start_image"));
         next.nodes.forEach(n => { if (n.kind === "image" && imageModel) n.config.modelId = imageModel.id; if (n.kind === "video" && videoModel) n.config.modelId = videoModel.id; });
+        if (id === "reference") {
+            const slot = imageModel?.media_slots.find(item => item.kind === "image");
+            if (slot) next.edges.push({ id: "reference-image", source: "asset", target: "image", targetHandle: `slot:${slot.id}` });
+        }
         setWorkflow(null); setRun(null); setGraph(next); setSelected(next.nodes.find(node => node.kind === "prompt")?.id ?? null); setName(templates.find(t => t.id === id)?.name ?? "Mi workflow"); setNotice(""); setError(""); updateUrl();
     };
     const save = async () => {
@@ -189,6 +196,19 @@ export function WorkflowStudio({ onBack, registerBeforeLeave }: { onBack: () => 
     const patchNode = (patch: Partial<NonNullable<typeof activeNode>>) => {
         if (!activeNode || !graph || run) return;
         setGraph({ ...graph, nodes: graph.nodes.map(n => n.id === selected ? { ...n, ...patch } : n) });
+    };
+    const setInputImage = (nodeId: string, assetId: string) => {
+        setGraph(current => current ? { ...current, nodes: current.nodes.map(node => node.id === nodeId && node.kind === "asset" ? { ...node, config: { ...node.config, assetId } } : node) } : current);
+    };
+    const chooseGalleryImage = (image: GalleryImage) => {
+        if (!activeNode || run) return;
+        const nodeId = activeNode.id;
+        void perform(async () => {
+            const { asset } = await api<{ asset: Asset }>("/api/workflows/assets", { galleryImageId: image.id });
+            setInputImage(nodeId, asset.id);
+            await refresh();
+            setNotice("Imagen de la galería lista como entrada. Guarda o ejecuta el workflow.");
+        });
     };
     const updateAngles = (angles: SalesAngle[]) => {
         if (!graph || !activeNode || run) return;
@@ -298,7 +318,12 @@ export function WorkflowStudio({ onBack, registerBeforeLeave }: { onBack: () => 
                                 {activeNode.kind === "salesAngles" && <SalesAnglesEditor angles={activeNode.config.angles ?? []} models={models.filter(model => model.mediaType === "image")} brands={brands} state={activeState} disabled={!!run} busy={busy} onChange={updateAngles} onAction={kind => void action(kind, activeNode.id)} />}
                                 {activeCap && parameterOptions(activeCap).map(field => <label key={field.id}>{field.label}{field.type === "select" ? <select disabled={!!run} value={String(activeNode.config.params?.[field.id] ?? "")} onChange={e => { const params = { ...activeNode.config.params }; if (e.target.value) params[field.id] = e.target.value; else delete params[field.id]; patchNode({ config: { ...activeNode.config, params } }); }}><option value="">Predeterminado del proveedor</option>{field.options?.map(v => <option key={v} value={v}>{v}</option>)}</select> : field.type === "checkbox" ? <select disabled={!!run} value={String(activeNode.config.params?.[field.id] ?? "")} onChange={e => { const params = { ...activeNode.config.params }; if (e.target.value) params[field.id] = e.target.value === "true"; else delete params[field.id]; patchNode({ config: { ...activeNode.config, params } }); }}><option value="">Predeterminado</option><option value="true">Sí</option><option value="false">No</option></select> : <input disabled={!!run} type={field.type === "number" ? "number" : "text"} min={field.minimum} max={field.maximum} value={String(activeNode.config.params?.[field.id] ?? "")} onChange={e => { const params = { ...activeNode.config.params }; if (e.target.value) params[field.id] = field.type === "number" ? Number(e.target.value) : e.target.value; else delete params[field.id]; patchNode({ config: { ...activeNode.config, params } }); }} />}</label>)}
                                 {activeNode.kind === "image" && activeCap && !run && <GenerationPrice key={activeCap.id} model={activeCap} resolution={String(activeNode.config.params?.resolution || "")} aspectRatio={String(activeNode.config.params?.aspect_ratio || "")} quality={String(activeNode.config.params?.quality || "")} size={String(activeNode.config.params?.size || "")} count={Number(activeNode.config.params?.n ?? 1)} />}
-                                {activeNode.kind === "asset" && <><label className="wf-upload"><Upload size={18} />{busy ? "Subiendo…" : "Subir imagen"}<input type="file" disabled={!!run || busy} accept="image/png,image/jpeg,image/webp,image/avif" onChange={e => { const file = e.target.files?.[0]; if (!file) return; void perform(async () => { if (file.size > 20 * 1024 * 1024) throw new Error("Máximo 20 MB por imagen."); const response = await fetch("/api/workflows/assets", { method: "POST", headers: { "Content-Type": file.type }, body: file }); const result = await response.json(); if (!response.ok) throw new Error(result.error); patchNode({ config: { assetId: result.asset.id } }); await refresh(); }); }} /></label><label>O usar un resultado guardado<select disabled={!!run} value={activeNode.config.assetId ?? ""} onChange={e => patchNode({ config: { assetId: e.target.value || undefined } })}><option value="">Selecciona una imagen</option>{assets.filter(a => a.kind === "image").map(a => <option key={a.id} value={a.id}>{new Date(a.createdAt).toLocaleString()} · {a.id.slice(0, 8)}</option>)}</select></label></>}
+                                {activeNode.kind === "asset" && <div className="wf-input-image">
+                                    {!run && <><p>Elige una imagen generada o guardada para usarla en la ejecución.</p>{!busy && <GalleryImagePicker key={activeNode.id} onPick={chooseGalleryImage} label="Elegir de la galería" compact contained />}
+                                        <label className="wf-upload"><Upload size={18} />{busy ? "Subiendo…" : "O subir una imagen"}<input type="file" disabled={busy} accept="image/png,image/jpeg,image/webp,image/avif" onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; const nodeId = activeNode.id; void perform(async () => { if (file.size > 20 * 1024 * 1024) throw new Error("Máximo 20 MB por imagen."); const response = await fetch("/api/workflows/assets", { method: "POST", headers: { "Content-Type": file.type }, body: file }); const result = await response.json() as { asset?: Asset; error?: string }; if (!response.ok || !result.asset) throw new Error(result.error ?? "No se pudo guardar la imagen."); setInputImage(nodeId, result.asset.id); await refresh(); setNotice("Imagen subida y lista como entrada. Guarda o ejecuta el workflow."); }); }} /></label></>}
+                                    {!run && activeNode.config.assetId && <div className="wf-input-image-preview"><span>Imagen seleccionada</span><img src={`/api/workflows/assets/${activeNode.config.assetId}`} alt="Imagen de entrada seleccionada" /></div>}
+                                    {!run && !graph.edges.some(edge => edge.source === activeNode.id) && <p className="wf-warning">Conecta la salida de esta imagen a una entrada de imagen del modelo para que se use al ejecutar.</p>}
+                                </div>}
                                 {["approval", "output"].includes(activeNode.kind) && <label>Tipo de entrada<select disabled={!!run} value={activeNode.config.valueKind ?? "image"} onChange={e => patchNode({ config: { valueKind: e.target.value as "text" | "image" | "video" | "audio" } })}><option value="text">Texto</option><option value="image">Imagen</option><option value="video">Video</option><option value="audio">Audio</option></select></label>}
                                 {activeState && <div className={`wf-status wf-status-${activeState.status}`}>{statusLabels[activeState.status]}</div>}
                                 {activeState?.value?.text && <p className="wf-text-result">{activeState.value.text}</p>}

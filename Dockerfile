@@ -11,6 +11,7 @@ RUN npm run build
 
 FROM node:22-alpine AS workflow-worker
 WORKDIR /app
+RUN apk add --no-cache font-dejavu
 ENV NODE_ENV=production
 ENV OPEN_HIGGSFIELD_STORAGE_DIR=/app/data
 RUN addgroup --system --gid 1001 nodejs \
@@ -27,6 +28,7 @@ CMD ["npm", "run", "workflows:worker"]
 
 FROM node:22-alpine AS runner
 WORKDIR /app
+RUN apk add --no-cache font-dejavu
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0

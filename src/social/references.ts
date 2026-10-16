@@ -15,8 +15,8 @@ function imageSlots(model: ImageModelCapability): MediaSlotCapability[] {
         .filter(slot => slot.kind === "image");
 }
 
-async function referenceSheet(files: File[]): Promise<File> {
-    if (files.length > 12) throw new WorkflowError("Hay demasiadas imágenes para reunir en una referencia. Usa un modelo que admita varias imágenes.");
+export async function referenceSheet(files: File[]): Promise<File> {
+    if (!files.length || files.length > 20) throw new WorkflowError("Hay demasiadas imágenes para reunir en una referencia. Usa un modelo que admita varias imágenes.");
     const columns = Math.min(3, files.length);
     const rows = Math.ceil(files.length / columns);
     const cell = 512;
@@ -25,34 +25,45 @@ async function referenceSheet(files: File[]): Promise<File> {
     const height = rows * cell + (rows + 1) * gap;
     const composites = await Promise.all(files.map(async (file, index) => ({
         input: await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 40_000_000 })
-            .rotate().resize(cell, cell, { fit: "contain", background: "#ffffff" }).flatten({ background: "#ffffff" }).jpeg({ quality: 90 }).toBuffer(),
+            .rotate().resize(cell, cell, { fit: "contain", background: "#808080" }).flatten({ background: "#808080" }).png().toBuffer(),
         left: gap + (index % columns) * (cell + gap),
         top: gap + Math.floor(index / columns) * (cell + gap),
     })));
     const data = await sharp({ create: { width, height, channels: 3, background: "#f5f5f5" } })
-        .composite(composites).jpeg({ quality: 90 }).toBuffer();
-    return new File([new Uint8Array(data)], "brand-reference-sheet.jpg", { type: "image/jpeg" });
+        .composite(composites).png().toBuffer();
+    return new File([new Uint8Array(data)], "brand-reference-sheet.png", { type: "image/png" });
+}
+
+/** Visible labels survive providers which discard upload filenames. Originals stay untouched. */
+export async function namedReferenceFile(data: Buffer, name: string): Promise<File> {
+    if (!/^[a-z][a-z0-9_-]{0,39}$/.test(name)) throw new WorkflowError("Nombre de referencia inválido.");
+    const image = await sharp(data, { limitInputPixels: 40_000_000 }).rotate().resize(768, 768, { fit: "inside", withoutEnlargement: true }).png().toBuffer({ resolveWithObject: true });
+    const width = Math.max(400, image.info.width);
+    const label = Buffer.from(`<svg width="${width}" height="48"><rect width="100%" height="100%" fill="#222"/><text x="12" y="31" fill="white" font-family="sans-serif" font-size="18">@${name}</text></svg>`);
+    const result = await sharp({ create: { width, height: image.info.height + 48, channels: 4, background: "#808080" } }).composite([{ input: image.data, left: 0, top: 48 }, { input: label, left: 0, top: 0 }]).png().toBuffer();
+    return new File([new Uint8Array(result)], `reference-${name}.png`, { type: "image/png" });
 }
 
 /** Keep all logos, and optionally the source creative, in one provider input. */
-export async function referenceSheetValue(assetIds: string[], provider: string, accept?: string): Promise<string> {
+export async function referenceSheetValue(assetIds: string[], provider: string, accept?: string, labels: Record<string, string> = {}): Promise<string> {
     const files = await Promise.all(assetIds.map(async (id, index) => {
         const { asset, data } = await readAsset(id);
         if (asset.kind !== "image") throw new WorkflowError(`La referencia visual ${index + 1} ya no está disponible.`);
+        if (labels[id]) return namedReferenceFile(data, labels[id]);
         return new File([new Uint8Array(data)], `reference-${index + 1}.png`, { type: asset.mime });
     }));
-    const sheet = await referenceSheet(files);
+    const sheet = files.length === 1 ? files[0] : await referenceSheet(files);
     const data = Buffer.from(await sheet.arrayBuffer());
     if (accept === "b64_only") return data.toString("base64");
-    if (["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(provider)) return `data:image/jpeg;base64,${data.toString("base64")}`;
-    return uploadToTmpfiles(data, "brand-reference-sheet.jpg", "image/jpeg");
+    if (["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(provider)) return `data:${sheet.type};base64,${data.toString("base64")}`;
+    return uploadToTmpfiles(data, "brand-reference-sheet.png", sheet.type);
 }
 
 /** Add every saved logo before slot processing, including on carousel and format variants. */
 export async function attachBrandImageReferences(form: FormData, model: ImageModelCapability, brand?: BrandSystem): Promise<void> {
     if (!brand) return;
     const logoIds = brandLogoAssetIds(brand);
-    if (!logoIds.length) return;
+    if (!logoIds.length && !brand.references?.length) return;
     const slots = imageSlots(model);
     if (!slots.length) throw new WorkflowError("El modelo elegido no admite imágenes de referencia. Elige uno que admita los logos del sistema de diseño.");
     const logos = await Promise.all(logoIds.map(async (id, index) => {
@@ -60,9 +71,15 @@ export async function attachBrandImageReferences(form: FormData, model: ImageMod
         if (asset.kind !== "image") throw new WorkflowError(`El logo ${index + 1} del sistema de diseño ya no está disponible.`);
         return new File([new Uint8Array(data)], `brand-logo-${index + 1}.png`, { type: asset.mime });
     }));
+    for (const reference of brand.references ?? []) {
+        const { asset, data } = await readAsset(reference.assetId);
+        if (asset.kind !== "image") throw new WorkflowError(`La referencia @${reference.name} ya no está disponible.`);
+        logos.push(await namedReferenceFile(data, reference.name));
+    }
 
     const multiple = slots.find(slot => slot.multiple);
     if (multiple) {
+        if (model.provider?.startsWith("google") && form.getAll(`slot_${multiple.id}`).length + logos.length > 14) throw new WorkflowError("Este modelo admite hasta 14 imágenes de referencia. Reduce los logos o las referencias.");
         for (const logo of logos) form.append(`slot_${multiple.id}`, logo);
         return;
     }

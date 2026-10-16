@@ -8,7 +8,7 @@ import { workflowStore, type Documents } from "./store";
 import { validateGraph, validateRunnable, executionGraph, canonicalParams } from "./validation";
 import { WorkflowError, type Workflow, type WorkflowRun, type WorkflowGraph, type Asset } from "./types";
 import type { BrandSystem } from "@/social/types";
-import { brandLogoAssetIds } from "@/social/brand";
+import { brandLogoAssetIds, brandImageAssetIds } from "@/social/brand";
 import { angleFormats, angleFormatKey, angleKey, anglePrompt } from "./sales-angles";
 
 export async function saveWorkflow(input: { id?: string; revision?: number; name: string; graph: WorkflowGraph }): Promise<Workflow> {
@@ -82,11 +82,12 @@ export async function prepareRun(graph: WorkflowGraph) {
             const brand = angle.brandId ? await workflowStore().read<BrandSystem>(`brand:${angle.brandId}`) : undefined;
             if (angle.brandId && !brand) throw new WorkflowError(`El sistema de diseño del ángulo «${angle.text}» ya no existe.`);
             const logoAssetIds = brand ? brandLogoAssetIds(brand) : [];
-            for (const id of logoAssetIds) {
+            const referenceAssetIds = (brand?.references ?? []).map(item => item.assetId);
+            for (const id of brand ? brandImageAssetIds(brand) : []) {
                 if ((await workflowStore().read<Asset>(`asset:${id}`))?.kind !== "image") throw new WorkflowError("Un logo del sistema de diseño ya no está disponible.");
             }
-            if (logoAssetIds.length && cap && !cap.media_slots.some(slot => slot.kind === "image" && !slot.required)) throw new WorkflowError(`El modelo de «${angle.text}» no admite los logos del sistema de diseño.`);
-            angleContexts[key] = { prompt: anglePrompt("", angle, brand), logoAssetId: logoAssetIds[0], logoAssetIds };
+            if ((logoAssetIds.length || referenceAssetIds.length) && cap && !cap.media_slots.some(slot => slot.kind === "image" && !slot.required)) throw new WorkflowError(`El modelo de «${angle.text}» no admite los logos del sistema de diseño.`);
+            angleContexts[key] = { prompt: anglePrompt("", angle, brand), logoAssetId: logoAssetIds[0], logoAssetIds, referenceAssetIds, referenceLabels: Object.fromEntries((brand?.references ?? []).map(item => [item.assetId, item.name])) };
             if (cap) {
                 const sourceId = graph.edges.find(edge => edge.target === node.id && edge.targetHandle === "prompt")?.source;
                 const source = graph.nodes.find(entry => entry.id === sourceId);
@@ -105,7 +106,7 @@ export async function prepareRun(graph: WorkflowGraph) {
         const slot = cap?.media_slots.find(item => item.kind === "image" && !item.required);
         const [nodeId, angleId] = key.split(":");
         const angle = graph.nodes.find(node => node.id === nodeId)?.config.angles?.find(item => item.id === angleId);
-        const usesReference = !!context.logoAssetIds?.length || !!context.logoAssetId || !!angle && angleFormats(angle).length > 1;
+        const usesReference = !!context.referenceAssetIds?.length || !!context.logoAssetIds?.length || !!context.logoAssetId || !!angle && angleFormats(angle).length > 1;
         return usesReference && !!slot && !["openrouter", "google-ai-studio", "google-vertex", "vercel-ai-gateway"].includes(cap.provider ?? "freepik") && slot.accept !== "b64_only";
     });
     if (needsHostedReferences && !process.env.CLOUDINARY_URL && !(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)) throw new WorkflowError("Este proveedor necesita subir las referencias a Cloudinary. Configura el almacenamiento o usa OpenRouter, que admite imágenes locales.");

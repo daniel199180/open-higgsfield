@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Download, ImagePlus, Sparkles, VectorSquare } from "lucide-react";
 import type { BrandSystem, LogoResult } from "@/social/types";
-import { brandLogoAssetIds, MAX_BRAND_LOGOS } from "@/social/brand";
+import { brandLogoAssetIds, brandSaveInput, MAX_BRAND_LOGOS } from "@/social/brand";
 
 /* eslint-disable @next/next/no-img-element -- authenticated local asset previews. */
 type Model = { id: string; name: string; acceptsImage: boolean; maxOutputs: number };
@@ -75,7 +75,7 @@ export function LogoLab({ brands, initialBrandId, onBrandUpdated }: Props) {
         try {
             const logoAssetIds = [...new Set([...brandLogoAssetIds(brand), result.previewAssetId])];
             if (logoAssetIds.length > MAX_BRAND_LOGOS) throw new Error(`Este sistema ya tiene ${MAX_BRAND_LOGOS} logos. Quita uno antes de añadir otro.`);
-            const response = await fetch("/api/social", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save-brand", brand: { ...brand, logoAssetIds, logoAssetId: logoAssetIds[0], logoVectorAssetId: result.vectorAssetId } }) });
+            const response = await fetch("/api/social", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save-brand", brand: brandSaveInput({ ...brand, logoAssetIds, logoAssetId: logoAssetIds[0], logoVectorAssetId: result.vectorAssetId }) }) });
             const value = await response.json();
             if (!response.ok) throw new Error(value.error ?? "No se pudo aplicar el logo.");
             await onBrandUpdated(value.brand);

@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, ArrowUpRight, Download, ImagePlus, Palette, Plus, Save, Trash2, VectorSquare } from "lucide-react";
 import type { ImageTask } from "@/types";
 import type { BrandSystem, SocialFormat, SocialProject } from "@/social/types";
-import { brandLogoAssetIds, MAX_BRAND_LOGOS } from "@/social/brand";
+import { brandLogoAssetIds, brandSaveInput, MAX_BRAND_LOGOS, MAX_BRAND_REFERENCES } from "@/social/brand";
 import { useImageTasks } from "@/hooks/useImageTasks";
 import { LogoLab } from "./LogoLab";
+import { BrandReferencesEditor } from "./BrandReferencesEditor";
 
 /* eslint-disable @next/next/no-img-element -- outputs can come from arbitrary configured image providers. */
 
@@ -18,6 +19,7 @@ const blankBrand: BrandDraft = {
     name: "", primaryColor: "#000000", secondaryColor: "#ffffff", accentColor: "#ff4d4d",
     headingFont: "Montserrat", bodyFont: "Inter", voice: "Cercana, clara y profesional",
     visualRules: "Diseño limpio, alto contraste y jerarquía visual clara.",
+    negativePrompt: "", references: [],
 };
 const formatLabels: Record<SocialFormat, string> = {
     "post-square": "Post cuadrado", "post-portrait": "Post vertical", story: "Historia", carousel: "Carrusel",
@@ -160,7 +162,7 @@ export function SocialStudio({ onBack }: Props) {
         setError("");
         setBusy(true);
         try {
-            const result = await postSocial({ action: "save-brand", brand: { ...brandDraft, logoAssetIds, logoAssetId: logoAssetIds[0] } });
+            const result = await postSocial({ action: "save-brand", brand: brandSaveInput({ ...brandDraft, logoAssetIds, logoAssetId: logoAssetIds[0] }) });
             await load();
             setBrandDraft({ ...result.brand });
             setLogoBrandId(result.brand.id);
@@ -195,12 +197,38 @@ export function SocialStudio({ onBack }: Props) {
         }
     }
 
+    async function addReferences(files: File[]) {
+        if (files.length + (brandDraft.references?.length ?? 0) > MAX_BRAND_REFERENCES) { setError(`Puedes subir hasta ${MAX_BRAND_REFERENCES} referencias.`); return; }
+        setBusy(true); setError("");
+        const names = new Set((brandDraft.references ?? []).map(item => item.name));
+        try {
+            for (const file of files) {
+                const assetId = await uploadLogo(file);
+                let sequence = 1; while (names.has(`referencia-${sequence}`)) sequence++;
+                const name = `referencia-${sequence}`; names.add(name);
+                setBrandDraft(current => ({ ...current, references: [...(current.references ?? []), { assetId, name }] }));
+            }
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo subir la referencia."); }
+        finally { setBusy(false); }
+    }
+
     async function exportBrand(value: BrandSystem) {
         try {
             const exported: Record<string, unknown> = { ...value };
             delete exported.logoAssetId;
             delete exported.logoAssetIds;
             delete exported.logoVectorAssetId;
+            delete exported.references;
+            exported.referenceImages = await Promise.all((value.references ?? []).map(async item => {
+                const response = await fetch(`/api/workflows/assets/${item.assetId}`);
+                if (!response.ok) throw new Error("No se pudo exportar una referencia.");
+                const blob = await response.blob();
+                const dataUrl = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result));
+                    reader.onerror = () => reject(new Error("No se pudo leer la referencia.")); reader.readAsDataURL(blob);
+                });
+                return { name: item.name, dataUrl };
+            }));
             exported.logoDataUrls = await Promise.all(brandLogoAssetIds(value).map(async id => {
                 const response = await fetch(`/api/workflows/assets/${id}`);
                 if (!response.ok) throw new Error("No se pudieron incluir todos los logos en el archivo.");
@@ -222,7 +250,17 @@ export function SocialStudio({ onBack }: Props) {
         setError("");
         setBusy(true);
         try {
-            const value = JSON.parse(await file.text()) as Partial<BrandSystem> & { logoDataUrl?: string; logoDataUrls?: string[] };
+            if (file.size > 64 * 1024 * 1024) throw new Error("El archivo JSON supera 64 MB.");
+            const value = JSON.parse(await file.text()) as Partial<BrandSystem> & { logoDataUrl?: string; logoDataUrls?: string[]; referenceImages?: Array<{ name: string; dataUrl: string }> };
+            if (value.referenceImages && (!Array.isArray(value.referenceImages) || value.referenceImages.length > MAX_BRAND_REFERENCES)) throw new Error("Demasiadas referencias en el archivo.");
+            const importedReferences: NonNullable<BrandSystem["references"]> = [];
+            for (const item of value.referenceImages ?? []) {
+                if (!/^[a-z][a-z0-9_-]{0,39}$/.test(item.name) || importedReferences.some(reference => reference.name === item.name)) throw new Error("Nombre de referencia inválido o duplicado.");
+                const match = /^data:image\/(png|jpeg|webp|avif);base64,([A-Za-z0-9+/=]+)$/.exec(item.dataUrl);
+                if (!match || match[2].length > 28 * 1024 * 1024) throw new Error("Imagen de referencia inválida o demasiado grande.");
+                const bytes = Uint8Array.from(atob(match[2]), char => char.charCodeAt(0));
+                importedReferences.push({ name: item.name, assetId: await uploadLogo(new File([bytes], "reference.png", { type: `image/${match[1]}` })) });
+            }
             if (![value.name, value.primaryColor, value.secondaryColor, value.accentColor, value.headingFont, value.bodyFont].every(item => typeof item === "string")) {
                 throw new Error("El JSON no contiene un sistema de diseño válido.");
             }
@@ -230,6 +268,7 @@ export function SocialStudio({ onBack }: Props) {
                 name: value.name!, primaryColor: value.primaryColor!, secondaryColor: value.secondaryColor!, accentColor: value.accentColor!,
                 headingFont: value.headingFont!, bodyFont: value.bodyFont!, voice: typeof value.voice === "string" ? value.voice : "",
                 visualRules: typeof value.visualRules === "string" ? value.visualRules : "",
+                negativePrompt: typeof value.negativePrompt === "string" ? value.negativePrompt : "", references: importedReferences,
             });
             const logoDataUrls = value.logoDataUrls ?? (value.logoDataUrl ? [value.logoDataUrl] : []);
             if (logoDataUrls.length > MAX_BRAND_LOGOS) throw new Error(`El archivo contiene más de ${MAX_BRAND_LOGOS} logos.`);
@@ -357,7 +396,7 @@ export function SocialStudio({ onBack }: Props) {
                                 <div className="relative flex min-h-[360px] flex-col justify-between overflow-hidden rounded-[22px] p-7 sm:min-h-[430px] sm:p-9" style={{ background: `linear-gradient(145deg, ${previewPrimary} 0%, #090909 80%)` }}>
                                     <div className="pointer-events-none absolute -right-20 top-1/4 h-64 w-64 rounded-full border-[42px] opacity-30" style={{ borderColor: previewAccent }} />
                                     <div className="pointer-events-none absolute right-16 top-1/3 h-36 w-36 rounded-full blur-[65px]" style={{ backgroundColor: previewAccent, opacity: 0.35 }} />
-                                    <div className="relative flex items-start justify-between gap-4"><div className="flex items-center gap-3">{logoAssetIds[0] ? <img src={`/api/workflows/assets/${logoAssetIds[0]}`} alt="Logo de referencia" className="h-10 w-10 rounded-xl bg-white object-contain p-1" /> : <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/25 bg-white/10 text-sm font-semibold" style={{ color: previewSecondary }}>{(brandDraft.name || "M").trim().slice(0, 1).toUpperCase()}</span>}<span className="max-w-[180px] truncate text-sm font-semibold tracking-wide" style={{ color: previewSecondary }}>{brandDraft.name || "Tu marca"}</span></div><ArrowUpRight size={20} style={{ color: previewAccent }} /></div>
+                                    <div className="relative flex items-start justify-between gap-4"><div className="flex items-center gap-3">{logoAssetIds[0] ? <img src={`/api/workflows/assets/${logoAssetIds[0]}`} alt="Logo de referencia" className="h-10 w-10 rounded-xl bg-neutral-500 object-contain p-1" /> : <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/25 bg-white/10 text-sm font-semibold" style={{ color: previewSecondary }}>{(brandDraft.name || "M").trim().slice(0, 1).toUpperCase()}</span>}<span className="max-w-[180px] truncate text-sm font-semibold tracking-wide" style={{ color: previewSecondary }}>{brandDraft.name || "Tu marca"}</span></div><ArrowUpRight size={20} style={{ color: previewAccent }} /></div>
                                     <div className="relative max-w-[370px]"><span className="mb-4 inline-flex rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em]" style={{ borderColor: previewAccent, color: previewAccent }}>Identidad en movimiento</span><p className="text-4xl font-semibold leading-[1.06] tracking-[-0.05em] sm:text-5xl" style={{ color: previewSecondary, fontFamily: previewHeadingFont }}>Ideas que se<br /><span style={{ color: previewAccent }}>sienten</span> como marca.</p><p className="mt-5 line-clamp-3 max-w-xs text-xs leading-5 text-white/70" style={{ fontFamily: previewBodyFont }}>{brandDraft.voice || "Una voz única para cada idea."}</p><span className="mt-7 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold" style={{ backgroundColor: previewAccent, color: previewPrimary }}>Explorar ideas <ArrowUpRight size={13} /></span></div>
                                     <div className="relative flex items-center justify-between border-t border-white/20 pt-4 text-[10px] uppercase tracking-[0.14em] text-white/65"><span>Design system</span><span>01 / 03</span></div>
                                 </div>
@@ -372,12 +411,20 @@ export function SocialStudio({ onBack }: Props) {
                             <div className="space-y-7 p-5 sm:p-7">
                                 <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">01</span><h4 className="text-sm font-semibold">Esencia de marca</h4><span className="h-px flex-1 bg-white/10" /></div><label className={labelClass}>Nombre de marca<input className={inputClass} required maxLength={80} value={brandDraft.name} onChange={event => updateBrand("name", event.target.value)} placeholder="Ej. Mi marca" /></label></div>
                                 <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">02</span><h4 className="text-sm font-semibold">Paleta de color</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-3 sm:grid-cols-3">{colorFields.map(({ key, label, caption }) => <div key={key} className="rounded-2xl border border-white/10 bg-white/[.025] p-3"><label className="block text-xs font-medium text-white/80" htmlFor={`${key}-picker`}>{label}<small className="mt-0.5 block text-[10px] font-normal text-white/40">{caption}</small></label><div className="mt-3 flex items-center gap-2"><input id={`${key}-picker`} aria-label={`Color ${label.toLowerCase()}`} type="color" className="h-10 w-10 shrink-0 cursor-pointer rounded-lg border border-white/10 bg-transparent p-0.5" value={validColor(brandDraft[key], "#000000")} onChange={event => updateBrand(key, event.target.value)} /><input aria-label={`Código del color ${label.toLowerCase()}`} className="min-w-0 w-full rounded-lg border border-white/10 bg-[#111111] px-2 py-2 text-xs text-white outline-none focus:border-[#ff4d4d]/60" value={brandDraft[key]} onChange={event => updateBrand(key, event.target.value)} /></div></div>)}</div></div>
-                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">03</span><h4 className="text-sm font-semibold">Lenguaje visual y verbal</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-4 sm:grid-cols-2"><label className={labelClass}>Tipografía de titulares<input className={inputClass} value={brandDraft.headingFont} onChange={event => updateBrand("headingFont", event.target.value)} /></label><label className={labelClass}>Tipografía de texto<input className={inputClass} value={brandDraft.bodyFont} onChange={event => updateBrand("bodyFont", event.target.value)} /></label><label className={`${labelClass} sm:col-span-2`}>Voz de marca<textarea className={`${inputClass} min-h-24 resize-y`} maxLength={500} value={brandDraft.voice} onChange={event => updateBrand("voice", event.target.value)} placeholder="¿Cómo habla tu marca?" /></label><label className={`${labelClass} sm:col-span-2`}>Reglas visuales<textarea className={`${inputClass} min-h-28 resize-y`} maxLength={1000} value={brandDraft.visualRules} onChange={event => updateBrand("visualRules", event.target.value)} placeholder="Composición, estilo, elementos que deben mantenerse…" /></label></div></div>
+                                <div><div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">03</span><h4 className="text-sm font-semibold">Lenguaje visual y verbal</h4><span className="h-px flex-1 bg-white/10" /></div><div className="grid gap-4 sm:grid-cols-2"><label className={labelClass}>Tipografía de titulares<input className={inputClass} value={brandDraft.headingFont} onChange={event => updateBrand("headingFont", event.target.value)} /></label><label className={labelClass}>Tipografía de texto<input className={inputClass} value={brandDraft.bodyFont} onChange={event => updateBrand("bodyFont", event.target.value)} /></label><label className={`${labelClass} sm:col-span-2`}>Voz de marca<textarea className={`${inputClass} min-h-24 resize-y`} maxLength={500} value={brandDraft.voice} onChange={event => updateBrand("voice", event.target.value)} placeholder="¿Cómo habla tu marca?" /></label><label className={`${labelClass} sm:col-span-2`}>Reglas visuales<textarea id="brand-visual-rules" className={`${inputClass} min-h-28 resize-y`} maxLength={1000} value={brandDraft.visualRules} onChange={event => updateBrand("visualRules", event.target.value)} placeholder="Composición, estilo, elementos que deben mantenerse…" /></label></div></div>
+                                <BrandReferencesEditor references={brandDraft.references ?? []} disabled={busy} onChange={value => updateBrand("references", value)} onUpload={files => void addReferences(files)} onMention={name => {
+                                    const input = document.getElementById("brand-visual-rules") as HTMLTextAreaElement | null;
+                                    const current = brandDraft.visualRules; const at = input?.selectionStart ?? current.length;
+                                    const next = current.slice(0, at) + ` @${name} ` + current.slice(input?.selectionEnd ?? at);
+                                    if (next.length > 1000) { setError("Las reglas visuales admiten hasta 1000 caracteres."); return; }
+                                    updateBrand("visualRules", next); input?.focus();
+                                }} />
+                                <label className={labelClass}>Prompt negativo / Prohibiciones<textarea className={`${inputClass} min-h-28 resize-y`} rows={4} maxLength={2000} value={brandDraft.negativePrompt ?? ""} onChange={event => updateBrand("negativePrompt", event.target.value)} placeholder="Ej. No cambiar el logo. No usar degradados. No incluir precios inventados." /><span className="mt-2 block text-xs font-normal text-white/40">Se envían como instrucciones en cada generación. Son indicaciones para la IA, no una garantía automática.</span></label>
                                 <div>
                                     <div className="mb-4 flex items-center gap-3"><span className="text-xs font-semibold text-[#ff4d4d]">04</span><h4 className="text-sm font-semibold">Logos de referencia</h4><span className="h-px flex-1 bg-white/10" /></div>
                                     <label className={`${labelClass} block rounded-2xl border border-dashed border-white/15 bg-white/[.02] p-4 transition hover:border-[#ff4d4d]/40`}>
                                         <span className="flex items-center gap-2 text-sm text-white/75"><ImagePlus size={17} />Añadir logos ({logoAssetIds.length}/{MAX_BRAND_LOGOS})</span>
-                                        <span className="mt-1 block text-xs font-normal text-white/40">PNG, JPG, WebP o AVIF. Todos se envían como referencias al generar un posteo. Si el modelo no admite imágenes, se te avisará antes de generar.</span>
+                                        <span className="mt-1 block text-xs font-normal text-white/40">PNG, JPG, WebP o AVIF. Se conserva la transparencia del PNG; el gris es solo para visualizarlo. Todos se envían como referencias al generar un posteo. Si el modelo no admite imágenes, se te avisará antes de generar.</span>
                                         <input className="mt-3 block w-full text-xs text-white/50 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-xs file:text-white" type="file" accept="image/png,image/jpeg,image/webp,image/avif" multiple disabled={busy || logoAssetIds.length >= MAX_BRAND_LOGOS} onChange={event => {
                                             const files = Array.from(event.target.files ?? []);
                                             event.target.value = "";
@@ -385,7 +432,7 @@ export function SocialStudio({ onBack }: Props) {
                                             void addLogos(files);
                                         }} />
                                     </label>
-                                    {logoAssetIds.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{logoAssetIds.map((id, index) => <div key={id} className="flex items-center gap-3 rounded-xl bg-white/5 p-3"><img src={`/api/workflows/assets/${id}`} alt={`Logo de referencia ${index + 1}`} className="h-12 w-12 rounded-lg bg-white object-contain p-1" /><span className="min-w-0 flex-1 text-xs text-white/55">Logo {index + 1}</span><button type="button" className="text-xs text-white/50 hover:text-white" onClick={() => { setLogoAssetIds(current => current.filter(value => value !== id)); setBrandDraft(current => ({ ...current, logoVectorAssetId: undefined })); }}>Quitar</button></div>)}</div>}
+                                    {logoAssetIds.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{logoAssetIds.map((id, index) => <div key={id} className="flex items-center gap-3 rounded-xl bg-white/5 p-3"><img src={`/api/workflows/assets/${id}`} alt={`Logo de referencia ${index + 1}`} className="h-12 w-12 rounded-lg bg-neutral-500 object-contain p-1" /><span className="min-w-0 flex-1 text-xs text-white/55">Logo {index + 1}</span><button type="button" className="text-xs text-white/50 hover:text-white" onClick={() => { setLogoAssetIds(current => current.filter(value => value !== id)); setBrandDraft(current => ({ ...current, logoVectorAssetId: undefined })); }}>Quitar</button></div>)}</div>}
                                 </div>
                             </div>
                             <div className="flex flex-wrap gap-2 border-t border-white/10 bg-white/[.02] p-5 sm:p-7"><button disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-[#c62828] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#ad1f1f] disabled:opacity-50"><Save size={16} />{busy ? "Guardando…" : brandDraft.id ? "Guardar cambios" : "Guardar sistema"}</button><button type="button" onClick={() => { setBrandDraft({ ...blankBrand }); setLogoAssetIds([]); }} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-white/65 transition hover:border-white/25 hover:text-white">Limpiar</button><label className="cursor-pointer rounded-xl border border-white/10 px-4 py-3 text-sm text-white/65 transition hover:border-white/25 hover:text-white">Importar JSON<input className="sr-only" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) void importBrand(file); event.target.value = ""; }} /></label></div>

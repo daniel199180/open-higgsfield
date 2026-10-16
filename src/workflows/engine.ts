@@ -195,15 +195,15 @@ export async function processWorkflowStep(deps: Dependencies = {}): Promise<bool
                 if (cap.provider === "openrouter") params.field_values = { ...params.field_values, n: 1 };
                 const media: CanonicalMediaInputs = {};
                 if (referenceSlot) {
-                    const referenceIds = [...(useBaseReference ? [baseAssetId] : []), ...logoAssetIds];
+                    const referenceIds = [...(useBaseReference ? [baseAssetId] : []), ...logoAssetIds, ...(context?.referenceAssetIds ?? [])];
                     if (referenceIds.length > 0) {
                         const providerId = cap.provider ?? "openrouter";
                         const resolve = deps.reference ?? referenceValue;
                         const references = referenceSlot.multiple
-                            ? await Promise.all(referenceIds.map(id => resolve(id, providerId, referenceSlot.accept)))
+                            ? await Promise.all(referenceIds.map(id => context?.referenceLabels?.[id] ? referenceSheetValue([id], providerId, referenceSlot.accept, context.referenceLabels) : resolve(id, providerId, referenceSlot.accept)))
                             : [referenceIds.length === 1
-                                ? await resolve(referenceIds[0], providerId, referenceSlot.accept)
-                                : await referenceSheetValue(referenceIds, providerId, referenceSlot.accept)];
+                                ? context?.referenceLabels?.[referenceIds[0]] ? await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context.referenceLabels) : await resolve(referenceIds[0], providerId, referenceSlot.accept)
+                                : await referenceSheetValue(referenceIds, providerId, referenceSlot.accept, context?.referenceLabels)];
                         media.images = { [referenceSlot.id]: referenceSlot.multiple ? references as unknown as string : references[0] };
                     }
                 }

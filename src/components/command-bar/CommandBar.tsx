@@ -41,7 +41,7 @@ import { CompanySelect, useCompanySelection } from "@/components/command-bar/Com
 import type { Character } from "@/social/types";
 import type { BrandSystem } from "@/social/types";
 import type { SocialProject } from "@/social/types";
-import { brandLogoAssetIds } from "@/social/brand";
+import { brandLogoAssetIds, brandImageAssetIds } from "@/social/brand";
 import { PillPopover } from "@/components/command-bar/PillPopover";
 import { StudioModePill, type StudioMode } from "@/components/studio/StudioModePill";
 import { LogoComposer } from "@/components/command-bar/LogoComposer";
@@ -684,6 +684,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 `Tipografías: títulos ${selectedBrand.headingFont}; cuerpo ${selectedBrand.bodyFont}.`,
                 selectedBrand.voice ? `Tono: ${selectedBrand.voice}.` : "",
                 selectedBrand.visualRules ? `Reglas visuales: ${selectedBrand.visualRules}.` : "",
+                selectedBrand.negativePrompt ? `Prohibiciones de marca: ${selectedBrand.negativePrompt}` : "",
                 "Respeta esta identidad de forma coherente. Conserva el idioma y el texto solicitado en el prompt.",
             ].filter(Boolean).join("\n") : "";
             const finalPrompt = [data.prompt, brandPrompt].filter(Boolean).join("\n\n");
@@ -692,7 +693,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 setApiError("ERR_PROMPT_TOO_LONG");
                 return;
             }
-            if (mode !== "video" && selectedBrand && brandLogoAssetIds(selectedBrand).length > 0 && !imageUploadSlots.some(slot => slot.kind === "image")) {
+            if (mode !== "video" && selectedBrand && brandImageAssetIds(selectedBrand).length > 0 && !imageUploadSlots.some(slot => slot.kind === "image")) {
                 throw new Error("El modelo elegido no admite imágenes de referencia. Elige uno que admita los logos del sistema de diseño.");
             }
             if (mode === "carousel") {

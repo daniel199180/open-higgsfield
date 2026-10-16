@@ -8,6 +8,8 @@ export interface BrandSystem {
     bodyFont: string;
     voice: string;
     visualRules: string;
+    negativePrompt?: string;
+    references?: Array<{ assetId: string; name: string }>;
     logoAssetId?: string;
     logoAssetIds?: string[];
     logoVectorAssetId?: string;

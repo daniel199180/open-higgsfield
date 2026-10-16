@@ -5,7 +5,7 @@ import { authorizeRequest, limitRequest, readLimitedBody } from "@/lib/api-secur
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError, type Asset } from "@/workflows/types";
 import type { BrandSystem, SocialProject } from "@/social/types";
-import { brandLogoAssetIds, MAX_BRAND_LOGOS } from "@/social/brand";
+import { brandLogoAssetIds, MAX_BRAND_LOGOS, MAX_BRAND_REFERENCES } from "@/social/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +20,8 @@ const brandSchema = z.object({
     bodyFont: z.string().trim().min(1).max(80),
     voice: z.string().trim().max(500),
     visualRules: z.string().trim().max(1000),
+    negativePrompt: z.string().trim().max(2000).optional(),
+    references: z.array(z.object({ assetId: z.uuid(), name: z.string().trim().regex(/^[a-z][a-z0-9_-]{0,39}$/) }).strict()).max(MAX_BRAND_REFERENCES).optional(),
     logoAssetId: z.uuid().optional(),
     logoAssetIds: z.array(z.uuid()).max(MAX_BRAND_LOGOS).optional(),
     logoVectorAssetId: z.uuid().optional(),
@@ -64,6 +66,13 @@ export async function POST(req: NextRequest) {
             const saved = await store.transaction(docs => {
                 const previous = input.brand.id ? docs.get(`brand:${input.brand.id}`) as BrandSystem | undefined : undefined;
                 if (input.brand.id && !previous) throw new WorkflowError("No se encontró el sistema de diseño.", 404);
+                const references = input.brand.references ?? previous?.references ?? [];
+                if (new Set(references.map(item => item.name)).size !== references.length) throw new WorkflowError("Cada referencia debe tener un nombre único.");
+                for (const reference of references) {
+                    if ((docs.get(`asset:${reference.assetId}`) as Asset | undefined)?.kind !== "image") throw new WorkflowError(`Vuelve a subir la referencia @${reference.name}.`);
+                }
+                const mentions = [...input.brand.visualRules.matchAll(/@([a-z][a-z0-9_-]*)/gi)].map(match => match[1]);
+                if (mentions.some(name => !references.some(item => item.name === name))) throw new WorkflowError("Hay menciones en las reglas visuales que no corresponden a una referencia. Corrígelas antes de guardar.");
                 const logoAssetIds = brandLogoAssetIds(input.brand);
                 if (logoAssetIds.length > MAX_BRAND_LOGOS) throw new WorkflowError(`Puedes guardar hasta ${MAX_BRAND_LOGOS} logos por sistema de diseño.`);
                 for (const id of logoAssetIds) {
@@ -76,7 +85,7 @@ export async function POST(req: NextRequest) {
                 }
                 if (!previous && [...docs.keys()].filter(key => key.startsWith("brand:")).length >= 50) throw new WorkflowError("Alcanzaste el límite de sistemas de diseño.", 409);
                 const now = Date.now();
-                const brand: BrandSystem = { ...input.brand, logoAssetIds, logoAssetId: logoAssetIds[0], id: previous?.id ?? crypto.randomUUID(), createdAt: previous?.createdAt ?? now, updatedAt: now };
+                const brand: BrandSystem = { ...input.brand, references, negativePrompt: input.brand.negativePrompt ?? previous?.negativePrompt ?? "", logoAssetIds, logoAssetId: logoAssetIds[0], id: previous?.id ?? crypto.randomUUID(), createdAt: previous?.createdAt ?? now, updatedAt: now };
                 docs.set(`brand:${brand.id}`, brand);
                 return brand;
             });

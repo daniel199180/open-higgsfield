@@ -68,7 +68,7 @@ export interface WorkflowRun {
     companyId?: string;
     status: RunStatus; nodes: Record<string, NodeRun>;
     capabilities: Record<string, ModelCapabilities>;
-    angleContexts?: Record<string, { prompt: string; logoAssetId?: string; logoAssetIds?: string[] }>;
+    angleContexts?: Record<string, { prompt: string; logoAssetId?: string; logoAssetIds?: string[]; referenceAssetIds?: string[]; referenceLabels?: Record<string, string> }>;
     createdAt: number; updatedAt: number; leaseOwner?: string; leaseUntil?: number;
     requestKey: string; fingerprint: string; cancelRequested?: boolean;
     events: Array<{ at: number; nodeId?: string; message: string }>;

@@ -1,10 +1,18 @@
 import type { EditorSnapshot, EditorTextLayer } from "./editor-document";
 import type { ImageLayerSet } from "@/types";
+import { hasReliableLayerLayout, layerFrame } from "./image-layer-layout";
 
 export const editorImageUrl = (taskId: string, index: number) => `/api/download/${encodeURIComponent(taskId)}?index=${index}`;
+const decodedImages = new Map<string, Promise<HTMLImageElement>>();
 async function loadImage(url: string): Promise<HTMLImageElement> {
-    const image = new Image(); image.src = url;
-    await image.decode(); return image;
+    let pending = decodedImages.get(url);
+    if (!pending) {
+        pending = (async () => { const image = new Image(); image.src = url; await image.decode(); return image; })();
+        decodedImages.set(url, pending);
+        if (decodedImages.size > 40) decodedImages.delete(decodedImages.keys().next().value!);
+        pending.catch(() => { if (decodedImages.get(url) === pending) decodedImages.delete(url); });
+    }
+    return pending;
 }
 export interface TextBounds { id: string; left: number; top: number; width: number; height: number }
 const fontStyles = new Map<string, Promise<void>>();
@@ -30,15 +38,15 @@ export async function renderEditorSnapshot(snapshot: EditorSnapshot, layerSet?: 
     const context = canvas.getContext("2d"); if (!context) throw new Error("No se pudo preparar el lienzo.");
     if (snapshot.layerTaskId) {
         if (!layerSet) throw new Error("Esperando las capas guardadas…");
+        if (!hasReliableLayerLayout(layerSet)) throw new Error("Esta separación no conserva las posiciones. Abre Capas para volver a separar la imagen original.");
         const order = [...snapshot.layerOrder, ...layerSet.layers.slice().sort((a, b) => a.zIndex - b.zIndex).map(item => item.index).filter(index => !snapshot.layerOrder.includes(index))];
         for (const index of order) {
             const layer = layerSet.layers.find(item => item.index === index);
             if (!layer || index === layerSet.referenceIndex || snapshot.deletedLayerIndexes[index] || snapshot.layerVisibility[index] === false) continue;
             const image = await loadImage(editorImageUrl(snapshot.layerTaskId, index));
-            const [left, top, right, bottom] = layerSet.version === 2 ? layer.boundingBox.absolute : [0, 0, width, height];
             const transform = snapshot.layerTransforms[index] ?? { x: 0, y: 0, scale: 1 };
-            const w = right - left; const h = bottom - top;
-            context.drawImage(image, left + transform.x * width / 100 + w * (1 - transform.scale) / 2, top + transform.y * height / 100 + h * (1 - transform.scale) / 2, w * transform.scale, h * transform.scale);
+            const frame = layerFrame(layer, layerSet, transform);
+            context.drawImage(image, frame.left, frame.top, frame.width, frame.height);
         }
     } else context.drawImage(source, 0, 0);
     const bounds: TextBounds[] = [];

@@ -62,6 +62,7 @@ provider-connections.enc.json
 /data/
 /workflows/
 /billing/
+/layer-jobs/
 /output/playwright/
 /.playwright-cli/
 

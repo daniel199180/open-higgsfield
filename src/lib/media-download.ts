@@ -68,7 +68,7 @@ export async function downloadPublicMedia(value: string, redirects = 0): Promise
                 return;
             }
             if (status !== 200) {
-                response.destroy(); reject(new Error("ERR_INVALID_GENERATED_MEDIA")); return;
+                response.destroy(); reject(new Error(`ERR_MEDIA_HTTP_${status}`)); return;
             }
             const limit = 256 * 1024 * 1024;
             if (Number(response.headers["content-length"] || 0) > limit) { response.destroy(); reject(new Error("ERR_MEDIA_TOO_LARGE")); return; }

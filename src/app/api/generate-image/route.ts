@@ -110,16 +110,13 @@ async function generate(req: NextRequest) {
   try {
     await attachBrandImageReferences(form, imageCaps, brand);
     if (character) {
-      if (caps.provider === "higgsfield" && caps.provider_model_id === "higgsfield-ai/soul/v2/standard" && character.soulId && character.soulStatus === "completed" && character.soulConnectionId === caps.provider_connection_id) {
-        fieldValues.custom_reference_id = character.soulId;
-        fieldValues.custom_reference_strength = 1;
-        params.field_values = fieldValues;
-      } else {
-        await attachCharacterImageReferences(form, imageCaps, character);
-      }
+      // Character identity is provider-neutral. Always send the saved visual
+      // references; a provider-specific identifier must never be required to
+      // generate a character.
+      await attachCharacterImageReferences(form, imageCaps, character);
     }
   } catch (error) {
-    return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "No se pudieron preparar las referencias del sistema de diseño." }, { status: error instanceof WorkflowError ? error.status : 500 });
+    return NextResponse.json({ error: error instanceof WorkflowError ? error.message : "No se pudieron preparar las referencias visuales." }, { status: error instanceof WorkflowError ? error.status : 500 });
   }
 
   // ── Slot processing ───────────────────────────────────────────────────────

@@ -672,7 +672,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
         try {
             const selectedBrand = brands.find((brand) => brand.id === selectedBrandId);
             const selectedCharacter = characters.find((character) => character.id === selectedCharacterId);
-            if (selectedCharacter && mode !== "video" && !imageUploadSlots.some(slot => slot.kind === "image") && !(imageModel.provider === "higgsfield" && imageModel.provider_model_id === "higgsfield-ai/soul/v2/standard" && selectedCharacter.soulStatus === "completed" && selectedCharacter.soulConnectionId === imageModel.provider_connection_id)) {
+            if (selectedCharacter && mode !== "video" && !imageUploadSlots.some(slot => slot.kind === "image")) {
                 throw new Error("El modelo elegido no admite las referencias del personaje. Selecciona otro modelo de imagen.");
             }
             if (mode === "video" && selectedCharacter && selectedBrand && brandLogoAssetIds(selectedBrand).length > 0) {

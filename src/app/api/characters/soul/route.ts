@@ -10,6 +10,8 @@ import { WorkflowError } from "@/workflows/types";
 import type { Character } from "@/social/types";
 
 export const runtime = "nodejs";
+// Legacy Higgsfield integration. The character UI and generation flow use
+// provider-neutral image references; keep this endpoint only for old records.
 const schema = z.object({ action: z.enum(["train", "refresh", "delete"]), characterId: z.uuid() }).strict();
 type SoulResponse = { id?: string; status?: string };
 

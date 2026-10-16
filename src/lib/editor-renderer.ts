@@ -16,7 +16,7 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
 }
 export interface TextBounds { id: string; left: number; top: number; width: number; height: number }
 const fontStyles = new Map<string, Promise<void>>();
-async function loadFont(text: EditorTextLayer) {
+export async function ensureEditorFont(text: EditorTextLayer) {
     const family = text.fontFamily.replace(/['"\\]/g, "");
     const key = `editor-font-${family.replace(/[^a-z0-9]/gi, "-")}`;
     if (!fontStyles.has(key)) fontStyles.set(key, (async () => {
@@ -51,7 +51,7 @@ export async function renderEditorSnapshot(snapshot: EditorSnapshot, layerSet?: 
     } else context.drawImage(source, 0, 0);
     const bounds: TextBounds[] = [];
     for (const text of snapshot.textLayers.filter(item => item.visible)) {
-        await loadFont(text);
+        await ensureEditorFont(text);
         context.font = `${text.fontWeight} ${text.fontSize}px '${text.fontFamily.replace(/['"\\]/g, "")}', sans-serif`;
         const lines: string[] = [];
         for (const paragraph of text.text.split("\n")) {

@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- authenticated local image and user upload previews */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, Check, Download, Eraser, Expand, Eye, EyeOff, GripVertical, Hand, ImagePlus, Layers, Loader2, MessageCircle, Paintbrush, RotateCcw, Scissors, Sparkles, Trash2, Type, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useImageTasks, revalidateImageTasks } from "@/hooks/useImageTasks";
 import { OUTPAINT_RATIOS, planOutpaint, type OutpaintSide, type OutpaintRatio } from "@/lib/image-outpaint";
@@ -10,15 +11,16 @@ import type { ImageLayerMetadata, ImageLayerSet } from "@/types";
 import { isLayerTask } from "@/lib/image-layer-task";
 import { useEditorDocument } from "@/hooks/useEditorDocument";
 import { blankEditorSnapshot, editorSnapshotSchema, textLayerSchema, type EditorSnapshot, type EditorStroke } from "@/lib/editor-document";
-import { editorImageUrl, renderEditorSnapshot, type TextBounds } from "@/lib/editor-renderer";
+import { editorImageUrl, ensureEditorFont, renderEditorSnapshot, type TextBounds } from "@/lib/editor-renderer";
 import { hasReliableLayerLayout, layerFrame } from "@/lib/image-layer-layout";
 
-interface Props { imageUrl?: string; taskId?: string; index?: number; prompt?: string; documentId?: string; onClose: () => void; embedded?: boolean; onRequestImage?: () => void; registerBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void }
+interface Props { imageUrl?: string; taskId?: string; index?: number; prompt?: string; documentId?: string; onClose: () => void; embedded?: boolean; onRequestImage?: () => void; onOpenDocument?: (id: string) => void; onNewFromOriginal?: () => void; registerBeforeLeave?: (guard: (() => Promise<boolean>) | null) => void }
 type Tool = "prompt" | "mask" | "erase" | "comments" | "background" | "expand" | "layers" | "text";
 type EditModel = { id: string; label: string; provider?: string; providerModelId?: string; connectionId?: string; aspectRatios?: string[]; supportsExpand?: boolean; supportsMask?: boolean };
 type Version = { id: string; url: string; label: string; prompt: string; index: number; parentId?: string };
 type LayerTransform = { x: number; y: number; scale: number };
 type TextLayer = { id: string; text: string; x: number; y: number; fontFamily: string; fontSize: number; fontWeight: number; color: string; align: "left" | "center" | "right"; visible: boolean };
+type DragGesture = { pointerId: number; target: HTMLElement; captureTarget: HTMLElement; startX: number; startY: number; initialX: number; initialY: number; x: number; y: number; rectWidth: number; rectHeight: number; displayWidth: number; displayHeight: number; frame: number | null; baseTransform: string };
 
 const EDIT_TOOLS = [
     { id: "prompt", label: "Imagen completa", icon: Sparkles },
@@ -47,7 +49,7 @@ function paintAt(canvas: HTMLCanvasElement, x: number, y: number, radius: number
     context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
 }
 
-export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, documentId, onClose, embedded = false, onRequestImage, registerBeforeLeave }: Props) {
+export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, documentId, onClose, embedded = false, onRequestImage, onOpenDocument, onNewFromOriginal, registerBeforeLeave }: Props) {
     const [documentSource, setDocumentSource] = useState({ taskId: taskId ?? "", index });
     const doc = useEditorDocument(documentSource.taskId, documentSource.index, documentId, prompt || "Edición de imagen");
     const state = doc.snapshot;
@@ -110,8 +112,8 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
     const activeCardRef = useRef<HTMLElement>(null);
     const sourceImageRef = useRef<HTMLImageElement>(null);
     const layerCanvasRef = useRef<HTMLDivElement>(null);
-    const layerDrag = useRef<{ pointerId: number; index: number; startX: number; startY: number; initialX: number; initialY: number } | null>(null);
-    const textDrag = useRef<{ pointerId: number; id: string; startX: number; startY: number; initialX: number; initialY: number } | null>(null);
+    const layerDrag = useRef<(DragGesture & { index: number; scale: number }) | null>(null);
+    const textDrag = useRef<(DragGesture & { id: string }) | null>(null);
     const borderDrag = useRef<{ pointerId: number; side: OutpaintSide; startX: number; startY: number; initial: number; displayWidth: number; displayHeight: number } | null>(null);
     const inFlight = useRef(false);
     const migratedLegacy = useRef(false);
@@ -235,8 +237,16 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
         return () => { active = false; };
     }, []);
     const visualKey = JSON.stringify({ taskId: currentTaskId, index: currentIndex, layerTaskId, layerOrder, layerVisibility, layerTransforms, deletedLayerIndexes, textLayers, layerSet });
+    const interactivePreview = tool === "text" || (tool === "layers" && reliableLayerSet);
+    const fontKey = textLayers.filter(item => item.visible).map(item => `${item.fontFamily}:${item.fontWeight}:${item.fontSize}`).join("|");
     useEffect(() => {
-        if (!doc.ready || !currentTaskId || (layerTaskId && !layerSet)) return;
+        if (!interactivePreview) return;
+        for (const text of textLayers) if (text.visible) void ensureEditorFont(text);
+        // Font loading is keyed by typography; moving a layer does not reload it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fontKey, interactivePreview]);
+    useEffect(() => {
+        if (!doc.ready || !currentTaskId || (layerTaskId && !layerSet) || interactivePreview) return;
         let active = true;
         void renderEditorSnapshot(state, layerSet).then(result => {
             if (!active) return;
@@ -248,13 +258,15 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
         return () => { active = false; };
         // Draft instructions and tool selection do not change the rendered artwork.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visualKey, doc.ready]);
+    }, [visualKey, doc.ready, interactivePreview]);
     useEffect(() => {
         const url = composition?.url;
         return () => { if (url) URL.revokeObjectURL(url); };
     }, [composition?.url]);
 
-    const versions = rootId ? tasks.filter((task) => !isLayerTask(task) && !task.reuse_state?.editor_internal && task.status === "COMPLETED" && task.reuse_state?.edit_root_task_id === rootId).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [];
+    const fileTaskIds = new Set(doc.history.entries.map(entry => entry.snapshot.taskId));
+    const legacySharedView = !documentId && doc.id === `${documentSource.taskId}-${documentSource.index}`;
+    const versions = rootId ? tasks.filter((task) => !isLayerTask(task) && !task.reuse_state?.editor_internal && task.status === "COMPLETED" && task.reuse_state?.edit_root_task_id === rootId && (legacySharedView || fileTaskIds.has(task.task_id))).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [];
     const originUrl = rootId ? `/api/download/${encodeURIComponent(rootId)}?index=${rootIndex}` : imageUrl;
     const rootPrompt = tasks.find((task) => task.task_id === rootId)?.prompt ?? (rootId === taskId ? prompt ?? "" : "");
     const history: Version[] = rootId ? [{ id: rootId, url: originUrl, label: "Original", prompt: rootPrompt, index: rootIndex }, ...versions.map((task, position) => {
@@ -520,29 +532,64 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
         return layerTransforms[index] ?? { x: 0, y: 0, scale: 1 };
     }
 
+    function beginDrag(event: React.PointerEvent<HTMLDivElement>, canvas: HTMLElement, initialX: number, initialY: number, baseTransform = ""): DragGesture | null {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        const target = event.currentTarget;
+        const gesture: DragGesture = { pointerId: event.pointerId, target, captureTarget: target, startX: event.clientX, startY: event.clientY, initialX, initialY, x: initialX, y: initialY, rectWidth: rect.width, rectHeight: rect.height, displayWidth: canvas.clientWidth, displayHeight: canvas.clientHeight, frame: null, baseTransform };
+        target.setPointerCapture(event.pointerId);
+        target.style.willChange = "transform";
+        return gesture;
+    }
+
+    function previewDrag(drag: DragGesture, event: React.PointerEvent<HTMLDivElement>, minimum: number, maximum: number) {
+        if (drag.pointerId !== event.pointerId) return;
+        event.preventDefault(); event.stopPropagation();
+        drag.x = Math.max(minimum, Math.min(maximum, drag.initialX + (event.clientX - drag.startX) / drag.rectWidth * 100));
+        drag.y = Math.max(minimum, Math.min(maximum, drag.initialY + (event.clientY - drag.startY) / drag.rectHeight * 100));
+        if (drag.frame !== null) return;
+        drag.frame = requestAnimationFrame(() => {
+            drag.frame = null;
+            const dx = (drag.x - drag.initialX) / 100 * drag.displayWidth;
+            const dy = (drag.y - drag.initialY) / 100 * drag.displayHeight;
+            drag.target.style.transform = `${drag.baseTransform} translate3d(${dx}px, ${dy}px, 0)`;
+        });
+    }
+
+    function finishDrag(drag: DragGesture, commit: () => void, cancelled: boolean) {
+        if (drag.frame !== null) cancelAnimationFrame(drag.frame);
+        if (drag.captureTarget.hasPointerCapture(drag.pointerId)) drag.captureTarget.releasePointerCapture(drag.pointerId);
+        if (!cancelled && (drag.x !== drag.initialX || drag.y !== drag.initialY)) flushSync(commit);
+        drag.target.style.transform = "";
+        drag.target.style.willChange = "";
+    }
+
+    useEffect(() => () => {
+        for (const drag of [layerDrag.current, textDrag.current]) if (drag?.frame !== null && drag?.frame !== undefined) cancelAnimationFrame(drag.frame);
+    }, []);
+
     function startLayerDrag(layer: ImageLayerMetadata, event: React.PointerEvent<HTMLDivElement>) {
         setSelectedLayerIndex(layer.index);
         if (panMode || tool !== "layers") return;
         event.stopPropagation();
-        if (isLockedLayer(layer.index) || busy) return;
+        if (isLockedLayer(layer.index) || busy || event.button !== 0 || !layerCanvasRef.current) return;
+        event.preventDefault();
         const transform = layerTransform(layer.index);
-        layerDrag.current = { pointerId: event.pointerId, index: layer.index, startX: event.clientX, startY: event.clientY, initialX: transform.x, initialY: transform.y };
-        event.currentTarget.setPointerCapture(event.pointerId);
+        const drag = beginDrag(event, layerCanvasRef.current, transform.x, transform.y);
+        if (drag) layerDrag.current = { ...drag, index: layer.index, scale: transform.scale };
     }
 
     function moveLayerDrag(event: React.PointerEvent<HTMLDivElement>) {
         const drag = layerDrag.current;
-        const canvas = layerCanvasRef.current;
-        if (!drag || !canvas || drag.pointerId !== event.pointerId) return;
-        const rect = canvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
-        const x = drag.initialX + ((event.clientX - drag.startX) / rect.width) * 100;
-        const y = drag.initialY + ((event.clientY - drag.startY) / rect.height) * 100;
-        setLayerTransforms((current) => ({ ...current, [drag.index]: { ...layerTransform(drag.index), x: Math.max(-100, Math.min(100, x)), y: Math.max(-100, Math.min(100, y)) } }));
+        if (drag) previewDrag(drag, event, -100, 100);
     }
 
     function endLayerDrag(event: React.PointerEvent<HTMLDivElement>) {
-        if (layerDrag.current?.pointerId === event.pointerId) layerDrag.current = null;
+        const drag = layerDrag.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        if (event.type === "pointerup") previewDrag(drag, event, -100, 100);
+        finishDrag(drag, () => doc.update(previous => ({ ...previous, layerTransforms: { ...previous.layerTransforms, [drag.index]: { x: drag.x, y: drag.y, scale: drag.scale } } }), "Mover capa", false), event.type === "pointercancel");
+        layerDrag.current = null;
     }
 
     function resetLayerTransform(index: number) {
@@ -581,31 +628,32 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
     function startTextDrag(layer: TextLayer, event: React.PointerEvent<HTMLDivElement>) {
         if (panMode || busy || tool !== "text" || !layer.visible || event.button !== 0) return;
         event.preventDefault(); event.stopPropagation(); setSelectedTextLayerId(layer.id);
-        textDrag.current = { pointerId: event.pointerId, id: layer.id, startX: event.clientX, startY: event.clientY, initialX: layer.x, initialY: layer.y };
-        event.currentTarget.setPointerCapture(event.pointerId);
+        const canvas = layerCanvasRef.current ?? sourceImageRef.current?.parentElement;
+        if (!canvas) return;
+        const drag = beginDrag(event, canvas, layer.x, layer.y, "translate(-50%, -50%)");
+        if (drag) textDrag.current = { ...drag, id: layer.id };
     }
 
     function moveTextDrag(event: React.PointerEvent<HTMLDivElement>) {
         const drag = textDrag.current;
-        const canvas = layerCanvasRef.current ?? sourceImageRef.current?.parentElement;
-        if (!drag || !canvas || drag.pointerId !== event.pointerId) return;
-        const rect = canvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
-        updateTextLayer(drag.id, { x: Math.max(0, Math.min(100, drag.initialX + ((event.clientX - drag.startX) / rect.width) * 100)), y: Math.max(0, Math.min(100, drag.initialY + ((event.clientY - drag.startY) / rect.height) * 100)) });
+        if (drag) previewDrag(drag, event, 0, 100);
     }
 
     function endTextDrag(event: React.PointerEvent<HTMLDivElement>) {
-        if (textDrag.current?.pointerId === event.pointerId) textDrag.current = null;
+        const drag = textDrag.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        if (event.type === "pointerup") previewDrag(drag, event, 0, 100);
+        finishDrag(drag, () => doc.update(previous => ({ ...previous, textLayers: previous.textLayers.map(item => item.id === drag.id ? { ...item, x: drag.x, y: drag.y } : item) }), "Mover texto", false), event.type === "pointercancel");
+        textDrag.current = null;
     }
 
-    function renderTextLayers() {
-        if (tool !== "text") return null;
+    function renderTextLayers(width: number) {
+        if (tool !== "text" && tool !== "layers") return null;
         return textLayers.filter((item) => item.visible).map((item) => {
             const selected = selectedTextLayerId === item.id;
-            const bounds = composition?.bounds.find(bound => bound.id === item.id);
-            if (!bounds) return null;
-            return <div key={item.id} role="button" tabIndex={0} aria-label={`Texto: ${item.text}`} onPointerDown={(event) => startTextDrag(item, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedTextLayerId(item.id); setPanMode(false); } }} className={`absolute z-[40] min-h-3 min-w-3 select-none border ${selected ? "border-[#ff4d4d]" : "border-transparent"} ${panMode ? "pointer-events-none" : "cursor-move"}`} style={{ left: `${bounds.left}%`, top: `${bounds.top}%`, width: `${bounds.width}%`, height: `${bounds.height}%` }}>
-                {selected && <span className="pointer-events-none absolute -top-5 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">Texto · arrastra para mover</span>}
+            return <div key={item.id} role="button" tabIndex={0} aria-label={`Texto: ${item.text}`} onPointerDown={(event) => startTextDrag(item, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedTextLayerId(item.id); setPanMode(false); } }} className={`absolute z-[40] box-border max-w-[90%] select-none border px-0.5 ${selected && tool === "text" ? "border-[#ff4d4d]" : "border-transparent"} ${panMode || tool !== "text" ? "pointer-events-none" : "pointer-events-auto cursor-move"}`} style={{ left: `${item.x}%`, top: `${item.y}%`, transform: "translate(-50%, -50%)", width: "max-content", fontFamily: `'${item.fontFamily.replace(/['"\\]/g, "")}', sans-serif`, fontWeight: item.fontWeight, fontSize: `${item.fontSize / width * 100}cqw`, lineHeight: 1.05, color: item.color, textAlign: item.align, whiteSpace: "pre-wrap", overflowWrap: "anywhere", touchAction: "none" }}>
+                {item.text || " "}
+                {selected && tool === "text" && <span className="pointer-events-none absolute -top-5 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">Texto · arrastra para mover</span>}
             </div>;
         });
     }
@@ -758,7 +806,7 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
         <div className={`mx-auto flex h-full w-full max-w-[1900px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b0b0b] shadow-2xl`}>
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#111] px-4 py-3 sm:px-6">
                 <div className="flex min-w-0 items-center gap-2"><Sparkles className="h-5 w-5 shrink-0 text-[#ff4d4d]" /><div className="min-w-0"><h2 className="truncate text-sm font-bold sm:text-base">Editor de imágenes</h2><p className="hidden text-[11px] text-white/45 sm:block">{doc.status}</p></div></div>
-                <div className="flex shrink-0 items-center gap-2">{onRequestImage && <button type="button" onClick={() => void doc.save().then(saved => { if (saved) onRequestImage(); })} disabled={busy || !doc.ready} className="flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/5 disabled:opacity-45"><ImagePlus className="h-4 w-4" /><span className="hidden sm:inline">{currentUrl ? "Cambiar imagen" : "Agregar imagen"}</span></button>}<button type="button" onClick={() => void doc.save().then(saved => { if (saved) onClose(); })} disabled={busy} aria-label={embedded ? "Volver al inicio" : "Cerrar editor"} className="flex items-center gap-2 rounded-lg p-2 text-sm text-white/70 hover:bg-white/10">{embedded ? <><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Inicio</span></> : <X className="h-5 w-5" />}</button></div>
+                <div className="flex shrink-0 items-center gap-2">{onRequestImage && <button type="button" onClick={() => void doc.save().then(saved => { if (saved) onRequestImage(); })} disabled={busy || !doc.ready} className="flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/5 disabled:opacity-45"><ImagePlus className="h-4 w-4" /><span className="hidden sm:inline">Archivos e imágenes</span></button>}<button type="button" onClick={() => void doc.save().then(saved => { if (saved) onClose(); })} disabled={busy} aria-label={embedded ? "Volver al inicio" : "Cerrar editor"} className="flex items-center gap-2 rounded-lg p-2 text-sm text-white/70 hover:bg-white/10">{embedded ? <><ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Inicio</span></> : <X className="h-5 w-5" />}</button></div>
             </header>
             <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-4 py-2 text-xs">
                 <input aria-label="Nombre de la edición" value={doc.title} disabled={!doc.ready || busy} onChange={event => doc.setTitle(event.target.value)} className="min-w-32 flex-1 rounded-lg bg-white/5 px-3 py-2" />
@@ -766,6 +814,9 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
                 <button type="button" disabled={!doc.ready || busy || !doc.history.entries.some(entry => entry.parentId === doc.history.cursor)} onClick={() => { const next = [...doc.history.entries].reverse().find(entry => entry.parentId === doc.history.cursor); if (next) doc.selectRevision(next.id); }} className="rounded-lg border border-white/15 px-3 py-2 disabled:opacity-40">Rehacer</button>
                 <button type="button" onClick={() => setShowHistory(value => !value)} className="rounded-lg border border-white/15 px-3 py-2">Historial · {doc.history.entries.length}</button>
                 <button type="button" disabled={!doc.ready || busy || !currentTaskId} onClick={() => void doc.save()} className="rounded-lg bg-[#c62828] px-3 py-2 disabled:opacity-40">Guardar edición</button>
+                <button type="button" disabled={!doc.ready || busy || !currentTaskId} onClick={() => void doc.saveCopy("duplicate").then(id => { if (id) onOpenDocument?.(id); })} className="rounded-lg border border-white/15 px-3 py-2 disabled:opacity-40" title="Crea otro archivo con todo el historial y las capas">Duplicar archivo</button>
+                <button type="button" disabled={!doc.ready || busy || !currentTaskId} onClick={() => void doc.saveCopy("fork").then(id => { if (id) onOpenDocument?.(id); })} className="rounded-lg border border-white/15 px-3 py-2 disabled:opacity-40" title="Guarda la versión seleccionada como otro archivo editable">Nueva edición desde esta versión</button>
+                {onNewFromOriginal && <button type="button" disabled={!doc.ready || busy || !currentTaskId} onClick={() => void doc.save().then(saved => { if (saved) onNewFromOriginal(); })} className="rounded-lg border border-white/15 px-3 py-2 disabled:opacity-40" title="Abre un archivo independiente con la imagen de partida">Nueva desde original</button>}
                 <button type="button" disabled={!doc.ready || busy || !currentTaskId} onClick={() => void downloadComposition()} className="rounded-lg border border-white/15 px-3 py-2 disabled:opacity-40">Descargar</button>
             </div>
             {doc.saveError && <div className="flex items-center gap-3 px-4 py-2 text-xs text-amber-200"><p role="alert">{doc.saveError}</p>{doc.ready && <button type="button" disabled={busy} onClick={() => void doc.saveCopy()} className="shrink-0 rounded-lg border border-amber-200/40 px-3 py-2">Guardar como copia</button>}</div>}
@@ -773,39 +824,37 @@ export function ImageEditor({ imageUrl = "", taskId, index = 0, prompt, document
             <div className={`relative flex min-h-0 flex-1 flex-col-reverse md:flex-row ${!doc.ready || busy ? "pointer-events-none" : ""}`}>
                 {!doc.ready && <div role="status" className="absolute inset-0 z-50 grid place-items-center bg-black/80">Abriendo edición guardada…</div>}
                 <main className="relative min-h-[240px] min-w-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_center,_#1c1c1c_0,_#0a0a0a_68%)]">
-                    {!currentUrl ? <div className="flex h-full items-center justify-center p-6"><div className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-dashed border-white/20 bg-[#141414]/90 px-6 py-12 text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-[#1b1b1b]"><ImagePlus className="h-8 w-8 text-[#ff4d4d]" /></div><h3 className="text-xl font-semibold">Tu lienzo está listo</h3><p className="mt-2 max-w-sm text-sm text-white/50">Agrega una imagen. La original y cada edición aparecerán juntas en este lienzo.</p>{onRequestImage ? <button type="button" onClick={onRequestImage} className="mt-6 rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Agregar imagen</button> : <label className="mt-6 cursor-pointer rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Subir imagen<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}</div></div> : <div ref={viewportRef} tabIndex={0} aria-label="Lienzo de versiones; usa la mano para arrastrar y Control o Comando con la rueda para hacer zoom" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClickCapture={(event) => { if (suppressCanvasClick.current) { event.preventDefault(); event.stopPropagation(); suppressCanvasClick.current = false; } }} className={`h-full w-full overflow-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${(tool === "layers" || tool === "text") && layerTask && reliableLayerSet ? "hidden" : ""} ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing [&_button]:cursor-grabbing" : "cursor-grab [&_button]:cursor-grab"}` : ""}`}><div className="flex min-h-[250%] min-w-[250%] w-max items-center justify-center gap-8 p-16 sm:gap-10" style={{ zoom: zoom / 100 }}>{visibleHistory.map((item, position) => {
+                    {!currentUrl ? <div className="flex h-full items-center justify-center p-6"><div className="flex w-full max-w-lg flex-col items-center rounded-2xl border border-dashed border-white/20 bg-[#141414]/90 px-6 py-12 text-center"><div className="mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-[#1b1b1b]"><ImagePlus className="h-8 w-8 text-[#ff4d4d]" /></div><h3 className="text-xl font-semibold">Tu lienzo está listo</h3><p className="mt-2 max-w-sm text-sm text-white/50">Abre un archivo de edición o selecciona una imagen para empezar uno nuevo.</p>{onRequestImage ? <button type="button" onClick={onRequestImage} className="mt-6 rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Abrir archivos e imágenes</button> : <label className="mt-6 cursor-pointer rounded-xl bg-[#c62828] px-6 py-3 text-sm font-bold text-white hover:bg-[#a92121]">Subir imagen<input type="file" accept="image/png,image/jpeg,image/webp,image/avif" className="sr-only" onChange={(event) => { void uploadSource(event.target.files?.[0]); event.target.value = ""; }} /></label>}</div></div> : <div ref={viewportRef} tabIndex={0} aria-label="Lienzo de versiones; usa la mano para arrastrar y Control o Comando con la rueda para hacer zoom" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClickCapture={(event) => { if (suppressCanvasClick.current) { event.preventDefault(); event.stopPropagation(); suppressCanvasClick.current = false; } }} className={`h-full w-full overflow-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${(tool === "layers" || tool === "text") && layerTask && reliableLayerSet ? "hidden" : ""} ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing [&_button]:cursor-grabbing" : "cursor-grab [&_button]:cursor-grab"}` : ""}`}><div className="flex min-h-[250%] min-w-[250%] w-max items-center justify-center gap-8 p-16 sm:gap-10" style={{ zoom: zoom / 100 }}>{visibleHistory.map((item, position) => {
                         const selected = item.id === currentTaskId && item.index === currentIndex;
                         const expandingHere = selected && tool === "expand" && !panMode && dimensions.width > 0 && dimensions.height > 0;
                         const image = <div onPointerMove={moveTextDrag} onPointerUp={endTextDrag} onPointerCancel={endTextDrag} className={`relative inline-block ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_2px_rgba(198,40,40,.28),0_0_24px_rgba(198,40,40,.18)]" : "border border-transparent"}`}>
                             {expandingHere && <div aria-label="Área nueva que se generará" className="pointer-events-none absolute z-0 border-2 border-dashed border-[#ff4d4d] bg-[#292929] bg-[linear-gradient(45deg,#393939_25%,transparent_25%),linear-gradient(-45deg,#393939_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#393939_75%),linear-gradient(-45deg,transparent_75%,#393939_75%)] bg-[length:18px_18px] shadow-[0_0_28px_rgba(255,77,77,.22)]" style={{ left: `${-outpaintPadding.left / dimensions.width * 100}%`, top: `${-outpaintPadding.top / dimensions.height * 100}%`, width: `${(dimensions.width + outpaintPadding.left + outpaintPadding.right) / dimensions.width * 100}%`, height: `${(dimensions.height + outpaintPadding.top + outpaintPadding.bottom) / dimensions.height * 100}%` }} />}
-                            <img ref={selected ? sourceImageRef : undefined} key={`${item.id}:${item.index}`} src={selected && composition && composition.key === visualKey ? composition.url : item.url} alt={`${item.label} de la imagen`} draggable={false} onLoad={selected ? imageLoaded : undefined} className="relative z-10 block max-h-[min(74dvh,900px)] max-w-[min(76vw,560px)] object-contain shadow-2xl" />
+                            <img ref={selected ? sourceImageRef : undefined} key={`${item.id}:${item.index}`} src={selected && !interactivePreview && composition && composition.key === visualKey ? composition.url : item.url} alt={`${item.label} de la imagen`} draggable={false} onLoad={selected ? imageLoaded : undefined} className="relative z-10 block max-h-[min(74dvh,900px)] max-w-[min(76vw,560px)] object-contain shadow-2xl" />
                             {selected && <><canvas ref={overlayRef} className={`absolute inset-0 z-20 h-full w-full touch-none ${!panMode && (tool === "mask" || tool === "erase") ? "cursor-crosshair" : "pointer-events-none"}`} aria-label="Pinta la zona a editar o borrar" onPointerDown={(event) => { drawing.current = true; lastPoint.current = null; strokeGesture.current = null; event.currentTarget.setPointerCapture(event.pointerId); draw(event); }} onPointerMove={draw} onPointerUp={finishStroke} onPointerCancel={finishStroke} /><div className={`absolute inset-0 z-20 ${!panMode && tool === "comments" ? "" : "pointer-events-none"}`}><button type="button" aria-label="Añadir comentario en esta posición" disabled={panMode || tool !== "comments" || comments.length >= 8} onClick={addComment} className={`absolute inset-0 h-full w-full ${!panMode && tool === "comments" ? "cursor-crosshair" : "pointer-events-none"}`} />{!panMode && tool === "comments" && comments.map((comment, noteIndex) => <button key={comment.id} type="button" title={comment.text || `Comentario ${noteIndex + 1}`} onClick={() => setSelectedComment(comment.id)} style={{ left: `${comment.x * 100}%`, top: `${comment.y * 100}%` }} className="pointer-events-auto absolute grid h-8 w-8 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-[#c62828] text-xs font-bold text-white shadow-lg">{noteIndex + 1}</button>)}</div></>}
-                            {selected && renderTextLayers()}
+                            {selected && tool === "text" && <div className="pointer-events-none absolute inset-0 z-[40]" style={{ containerType: "inline-size" }}>{renderTextLayers(dimensions.width || 1)}</div>}
                             {expandingHere && (["left", "right", "top", "bottom"] as OutpaintSide[]).map((side) => <button key={side} type="button" aria-label={`Estirar borde ${side === "left" ? "izquierdo" : side === "right" ? "derecho" : side === "top" ? "superior" : "inferior"}`} title={`Arrastra para expandir ${side === "left" ? "a la izquierda" : side === "right" ? "a la derecha" : side === "top" ? "hacia arriba" : "hacia abajo"}`} disabled={busy} onPointerDown={(event) => startBorderDrag(side, event)} onPointerMove={moveBorderDrag} onPointerUp={endBorderDrag} onPointerCancel={endBorderDrag} className={`absolute z-30 flex h-9 w-9 touch-none items-center justify-center rounded-full border-2 border-white bg-[#c62828] text-lg font-bold text-white shadow-lg hover:scale-110 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50 ${side === "left" || side === "right" ? "cursor-ew-resize" : "cursor-ns-resize"}`} style={{ left: side === "left" ? `${-outpaintPadding.left / dimensions.width * 100}%` : side === "right" ? `${(dimensions.width + outpaintPadding.right) / dimensions.width * 100}%` : "50%", top: side === "top" ? `${-outpaintPadding.top / dimensions.height * 100}%` : side === "bottom" ? `${(dimensions.height + outpaintPadding.bottom) / dimensions.height * 100}%` : "50%", transform: "translate(-50%, -50%)" }}>{side === "left" || side === "right" ? "↔" : "↕"}</button>)}
                         </div>;
                         return <article key={`${item.id}:${item.index}`} ref={selected ? activeCardRef : undefined} aria-label={`${item.label}, ${position + 1} de ${visibleHistory.length}${selected ? ", seleccionada" : ""}`} title={item.prompt || item.label} className="group/image relative shrink-0">
                             {selected ? image : <button type="button" onClick={() => selectVersion(item.id, item.url, item.index)} disabled={busy} aria-label={`Seleccionar ${item.label} para editar`} className="block disabled:opacity-60">{image}</button>}
                             <span className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity group-hover/image:opacity-100 group-focus-within/image:opacity-100">{item.label}{selected && <Check className="h-3.5 w-3.5 text-[#ff4d4d]" />}</span>
-                            <a href={selected && composition ? composition.url : `/api/download/${encodeURIComponent(item.id)}?index=${item.index}`} download title={`Descargar ${item.label}`} aria-label={`Descargar ${item.label}`} className="absolute bottom-3 right-3 rounded-lg bg-black/75 p-2 text-white opacity-0 shadow-lg transition-opacity hover:bg-black focus:opacity-100 group-hover/image:opacity-100 group-focus-within/image:opacity-100"><Download className="h-4 w-4" /></a>
+                            <a href={`/api/download/${encodeURIComponent(item.id)}?index=${item.index}`} onClick={selected ? (event) => { event.preventDefault(); void downloadComposition(); } : undefined} download title={`Descargar ${item.label}`} aria-label={`Descargar ${item.label}`} className="absolute bottom-3 right-3 rounded-lg bg-black/75 p-2 text-white opacity-0 shadow-lg transition-opacity hover:bg-black focus:opacity-100 group-hover/image:opacity-100 group-focus-within/image:opacity-100"><Download className="h-4 w-4" /></a>
                         </article>;
                     })}{busy && <div role="status" className="flex h-48 w-48 shrink-0 flex-col items-center justify-center gap-3 rounded-2xl bg-[#1d1111] text-center text-xs text-white/70"><Loader2 className="h-6 w-6 animate-spin text-[#ff4d4d]" />{recoveringLayers ? "Recuperando capas sin regenerar…" : "Generando nueva versión…"}</div>}</div></div>}
                     {(tool === "layers" || tool === "text") && layerTask && layerSet && reliableLayerSet && <div ref={layerViewportRef} tabIndex={0} aria-label="Mesa de trabajo de capas; selecciona y arrastra una capa" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} className={`absolute inset-0 z-[5] flex items-center justify-center overflow-auto bg-[#090909] p-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ff4d4d] ${panMode ? `select-none ${draggingCanvas ? "cursor-grabbing" : "cursor-grab"}` : ""}`}>
                         <div className="flex min-h-full min-w-full items-center justify-center" style={{ zoom: zoom / 100 }}>
-                            <div ref={layerCanvasRef} className="relative w-[min(78vw,820px)] max-w-full overflow-hidden border border-white/15 bg-[#101010] bg-[linear-gradient(45deg,#171717_25%,transparent_25%),linear-gradient(-45deg,#171717_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#171717_75%),linear-gradient(-45deg,transparent_75%,#171717_75%)] bg-[length:24px_24px] shadow-2xl" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }} onPointerMove={(event) => { moveLayerDrag(event); moveTextDrag(event); }} onPointerUp={(event) => { endLayerDrag(event); endTextDrag(event); }} onPointerCancel={(event) => { endLayerDrag(event); endTextDrag(event); }} aria-label="Lienzo editable de capas">
-                                {composition && <img src={composition.url} alt="Composición actual" draggable={false} className="pointer-events-none absolute inset-0 h-full w-full object-fill" />}
+                            <div ref={layerCanvasRef} className="relative w-[min(78vw,820px)] max-w-full overflow-hidden border border-white/15 bg-[#101010] bg-[linear-gradient(45deg,#171717_25%,transparent_25%),linear-gradient(-45deg,#171717_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#171717_75%),linear-gradient(-45deg,transparent_75%,#171717_75%)] bg-[length:24px_24px] shadow-2xl" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}`, containerType: "inline-size" }} onPointerMove={(event) => { moveLayerDrag(event); moveTextDrag(event); }} onPointerUp={(event) => { endLayerDrag(event); endTextDrag(event); }} onPointerCancel={(event) => { endLayerDrag(event); endTextDrag(event); }} aria-label="Lienzo editable de capas">
                                 {orderedLayers.map((layer, orderIndex) => {
                                     const transform = layerTransform(layer.index);
                                     const selected = selectedLayerIndex === layer.index;
                                     if (!layerImages[layer.index] || layer.index === referenceIndex || layerVisibility[layer.index] === false) return null;
                                     const frame = layerFrame(layer, layerSet, transform);
                                     const imageStyle = { left: `${frame.left / canvasWidth * 100}%`, top: `${frame.top / canvasHeight * 100}%`, width: `${frame.width / canvasWidth * 100}%`, height: `${frame.height / canvasHeight * 100}%`, zIndex: orderIndex + 1 };
-                                    return <div key={`workbench-layer-${layer.index}`} className="pointer-events-none absolute select-none" style={imageStyle}>
-                                        <div role="button" tabIndex={0} aria-label={`Seleccionar ${layer.name}`} onPointerDown={(event) => startLayerDrag(layer, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLayerIndex(layer.index); } }} className={`pointer-events-auto absolute inset-0 ${selected ? "border border-[#ff4d4d] shadow-[0_0_0_1px_rgba(198,40,40,.65)]" : "border border-transparent"} ${isLockedLayer(layer.index) ? "cursor-default" : panMode ? "cursor-grab" : "cursor-move"}`}>
+                                    return <div key={`workbench-layer-${layer.index}`} role="button" tabIndex={0} aria-label={`Seleccionar ${layer.name}`} onPointerDown={(event) => startLayerDrag(layer, event)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLayerIndex(layer.index); } }} className={`absolute select-none ${selected ? "outline outline-1 outline-[#ff4d4d]" : ""} ${isLockedLayer(layer.index) ? "cursor-default" : panMode ? "cursor-grab" : "cursor-move"}`} style={{ ...imageStyle, touchAction: "none" }}>
+                                        <img src={layerImages[layer.index]} alt="" draggable={false} className="pointer-events-none h-full w-full object-fill" />
                                             {selected && <span className="pointer-events-none absolute -top-6 left-0 whitespace-nowrap bg-[#c62828] px-1.5 py-1 text-[10px] font-semibold text-white">{layer.name}{isLockedLayer(layer.index) ? " · bloqueada" : ""}</span>}
-                                        </div>
                                     </div>;
                                 })}
-                                {renderTextLayers()}
+                                {renderTextLayers(canvasWidth)}
                             </div>
                         </div>
                     </div>}

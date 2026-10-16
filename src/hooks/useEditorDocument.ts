@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { appendEditorRevision, blankEditorSnapshot, currentEditorSnapshot, editorHistorySchema, type EditorDocument, type EditorHistory, type EditorSnapshot } from "@/lib/editor-document";
+import { appendEditorRevision, blankEditorSnapshot, currentEditorSnapshot, editorHistorySchema, forkEditorHistory, type EditorDocument, type EditorHistory, type EditorSnapshot } from "@/lib/editor-document";
 
 function initialHistory(taskId: string, index: number): EditorHistory {
     const entry = { id: crypto.randomUUID(), parentId: "", label: "Original", createdAt: new Date().toISOString(), snapshot: blankEditorSnapshot(taskId, index) };
@@ -91,17 +91,21 @@ export function useEditorDocument(sourceTaskId: string, sourceIndex: number, doc
         pending.current = run();
         try { return await pending.current; } finally { pending.current = null; }
     }, [id, ready, backup]);
-    const saveCopy = useCallback(async () => {
-        if (!ready || !id) return;
+    const saveCopy = useCallback(async (mode: "duplicate" | "fork" = "duplicate"): Promise<string | null> => {
+        if (!ready || !id) return null;
         if (pending.current) await pending.current;
+        if (!blocked.current && JSON.stringify(current.current) !== saved.current) await save();
         try {
             const newId = crypto.randomUUID();
-            const response = await fetch("/api/images/documents", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...current.current, title: `${current.current.title.slice(0, 150)} (copia)`, id: newId, expectedRevision: 0 }) });
+            const value = current.current;
+            const suffix = mode === "fork" ? " (nueva edición)" : " (copia)";
+            const response = await fetch("/api/images/documents", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...value, history: mode === "fork" ? forkEditorHistory(value.history) : structuredClone(value.history), title: `${value.title.slice(0, 160 - suffix.length)}${suffix}`, id: newId, expectedRevision: 0 }) });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || "No se pudo guardar la copia.");
             setSaveError(""); setCopy({ id: newId, sourceTaskId, sourceIndex });
-        } catch (error) { setSaveError(error instanceof Error ? error.message : "No se pudo guardar la copia."); }
-    }, [ready, id, sourceTaskId, sourceIndex]);
+            return newId;
+        } catch (error) { setSaveError(error instanceof Error ? error.message : "No se pudo guardar la copia."); return null; }
+    }, [ready, id, sourceTaskId, sourceIndex, save]);
     useEffect(() => { if (!ready || !dirty || !id) return; const timer = setTimeout(() => void save(), 800); return () => clearTimeout(timer); }, [history, title, ready, dirty, id, save]);
     useEffect(() => {
         if (!dirty) return;

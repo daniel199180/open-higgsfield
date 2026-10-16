@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendEditorRevision, blankEditorSnapshot, currentEditorSnapshot, editorHistorySchema, type EditorHistory } from "../src/lib/editor-document";
+import { appendEditorRevision, blankEditorSnapshot, currentEditorSnapshot, editorHistorySchema, forkEditorHistory, type EditorHistory } from "../src/lib/editor-document";
 
 function original(): EditorHistory {
     return { cursor: "original", entries: [{ id: "original", parentId: "", label: "Original", createdAt: new Date().toISOString(), snapshot: blankEditorSnapshot("image-1", 0) }] };
@@ -30,6 +30,17 @@ test("local gestures coalesce without overwriting the original or an existing br
     history = appendEditorRevision(history, blankEditorSnapshot("generated", 0), "IA", false);
     assert.deepEqual(history.entries[1].snapshot.layerOrder, [2, 1], "flattened AI result preserves its editable parent");
     assert.deepEqual(currentEditorSnapshot(history).textLayers, []);
+});
+test("a new editing file forks the selected version without sharing mutable history", () => {
+    let first = original();
+    first = appendEditorRevision(first, { ...currentEditorSnapshot(first), instructions: { ...currentEditorSnapshot(first).instructions, prompt: "Versión A" } }, "Editar");
+    const second = forkEditorHistory(first);
+    assert.equal(second.entries.length, 1);
+    assert.equal(currentEditorSnapshot(second).instructions.prompt, "Versión A");
+    assert.notEqual(second.cursor, first.cursor);
+    second.entries[0].snapshot.instructions.prompt = "Versión B";
+    assert.equal(currentEditorSnapshot(first).instructions.prompt, "Versión A");
+    assert.deepEqual(editorHistorySchema.parse(second), second);
 });
 test("editor documents reject unsafe asset ids, malformed history and unbounded values", () => {
     const history = original();
@@ -72,6 +83,15 @@ test("authenticated editor persistence, revision conflicts, reload and local com
     assert.equal((await PUT(request(body, { ...headers, Origin: "https://untrusted.test" }))).status, 403);
     assert.equal((await PUT(request())).status, 200);
     assert.equal((await PUT(request())).status, 409, "stale tabs cannot overwrite a saved document");
+    const sibling = { ...body, id: "another-edit", title: "Otra edición del mismo original", history: forkEditorHistory(history) };
+    assert.equal((await PUT(request(sibling))).status, 200, "one source can have independent saved files");
+    const duplicate = { ...body, id: "saved-editor-copy", title: "Prueba de edición (copia)", history: structuredClone(history) };
+    assert.equal((await PUT(request(duplicate))).status, 200, "the full editing history can be duplicated");
+    const listing = await GET(new NextRequest("http://localhost:3000/api/images/documents", { headers }));
+    const files = (await listing.json()).documents;
+    assert.equal(files.length, 3);
+    assert.deepEqual(files.map((file: { id: string }) => file.id).sort(), ["another-edit", "saved-editor", "saved-editor-copy"]);
+    assert.ok(files.every((file: { previewTaskId: string }) => file.previewTaskId === source.taskId));
     const reopened = await GET(new NextRequest("http://localhost:3000/api/images/documents?id=saved-editor", { headers }));
     const saved = (await reopened.json()).document;
     assert.equal(saved.revision, 1); assert.deepEqual(saved.history, history);

@@ -48,6 +48,11 @@ export function blankEditorSnapshot(taskId: string, index: number): EditorSnapsh
         comments: [], strokes: { mask: [], erase: [] }, padding: { left: 0, right: 0, top: 0, bottom: 0 } };
 }
 export function currentEditorSnapshot(history: EditorHistory): EditorSnapshot { return history.entries.find(entry => entry.id === history.cursor)!.snapshot; }
+/** Start a separate editable file at the selected revision, without altering its parent file. */
+export function forkEditorHistory(history: EditorHistory, now = new Date().toISOString()): EditorHistory {
+    const entry = { id: crypto.randomUUID(), parentId: "", label: "Inicio de la nueva edición", createdAt: now, snapshot: structuredClone(currentEditorSnapshot(history)) };
+    return { entries: [entry], cursor: entry.id };
+}
 /** Branches are retained when editing an older version. Only a recent leaf gesture can coalesce. */
 export function appendEditorRevision(history: EditorHistory, snapshot: EditorSnapshot, label: string, coalesce = false, now = new Date().toISOString()): EditorHistory {
     const current = history.entries.find(entry => entry.id === history.cursor)!;

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authorizeRequest, readLimitedBody, securityError } from "@/lib/api-security";
 import { workflowStore } from "@/workflows/store";
-import { editorHistorySchema, type EditorDocument } from "@/lib/editor-document";
+import { currentEditorSnapshot, editorHistorySchema, type EditorDocument } from "@/lib/editor-document";
 import { getTask, initStore } from "@/lib/task-store";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
         const id = req.nextUrl.searchParams.get("id");
         if (id) return NextResponse.json({ document: await workflowStore().read<EditorDocument>(`editor:${identifier.parse(id)}`) ?? null }, { headers });
         const documents = await workflowStore().list<EditorDocument>("editor:");
-        return NextResponse.json({ documents: documents.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ history, ...doc }) => ({ ...doc, versions: history.entries.length })) }, { headers });
+        return NextResponse.json({ documents: documents.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(({ history, ...doc }) => ({ ...doc, versions: history.entries.length, previewTaskId: currentEditorSnapshot(history).taskId, previewIndex: currentEditorSnapshot(history).index })) }, { headers });
     } catch (error) { return error instanceof z.ZodError ? NextResponse.json({ error: "Documento inválido." }, { status: 400, headers }) : securityError(error); }
 }
 export async function PUT(req: NextRequest) {

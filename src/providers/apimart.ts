@@ -14,6 +14,19 @@ function headers(connection: NonNullable<ApiMartConnection>): Record<string, str
     return { Authorization: `Bearer ${connection.credentials.apiKey}`, "Content-Type": "application/json" };
 }
 
+/** Convert upstream failures to a closed set; provider details never reach the UI. */
+function requestFailure(status: number, payload: unknown): string {
+    if (status === 401) return "ERR_APIMART_KEY_REJECTED";
+    if (status === 402) return "ERR_APIMART_CREDITS";
+    if (status === 429) return "ERR_APIMART_RATE_LIMIT";
+    if (status === 408 || status === 504) return "ERR_APIMART_TIMEOUT";
+    const compact = JSON.stringify(payload ?? {}).toLowerCase();
+    if (/prompt.{0,80}(too long|length|maximum|max)|maximum.{0,80}prompt/.test(compact)) return "ERR_APIMART_PROMPT_TOO_LONG";
+    if (/image_urls|reference image|input image|reference/.test(compact)) return "ERR_APIMART_REFERENCE_UNSUPPORTED";
+    if (status === 400 || status === 422) return "ERR_APIMART_PARAMETERS";
+    return "ERR_APIMART_REQUEST_FAILED";
+}
+
 async function requestJson(url: string, connection: NonNullable<ApiMartConnection>, init: RequestInit = {}): Promise<Record<string, unknown>> {
     let response: Response;
     try {
@@ -24,7 +37,7 @@ async function requestJson(url: string, connection: NonNullable<ApiMartConnectio
     }
     const payload = await response.json().catch(() => null);
     if (!response.ok || !payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) {
-        throw new Error(response.status === 401 ? "ERR_APIMART_KEY_REJECTED" : "ERR_APIMART_REQUEST_FAILED");
+        throw new Error(requestFailure(response.status, payload));
     }
     return payload as Record<string, unknown>;
 }

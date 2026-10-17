@@ -76,6 +76,8 @@ export interface SocialProject {
     taskIds: string[];
     aspectRatio?: string;
     resolution?: string;
+    /** Provider controls selected when the project was created. */
+    fieldValues?: Record<string, string | number | boolean>;
     slides?: CarouselSlide[];
     autoStory?: boolean;
     sourceProjectId?: string;

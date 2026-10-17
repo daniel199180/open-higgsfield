@@ -53,4 +53,9 @@ test("APIMart uses its fixed official API, Bearer credentials, and asynchronous 
         t.mock.method(globalThis, "fetch", async () => Response.json({ error: { message: "apimart-test-key private request" } }, { status: 401 }));
         await assert.rejects(provider.submit(image), /ERR_APIMART_KEY_REJECTED/);
     });
+
+    await t.test("classifies a prompt limit without exposing provider details", async (t) => {
+        t.mock.method(globalThis, "fetch", async () => Response.json({ error: { message: "prompt is too long: private content" } }, { status: 422 }));
+        await assert.rejects(provider.submit(image), /ERR_APIMART_PROMPT_TOO_LONG/);
+    });
 });

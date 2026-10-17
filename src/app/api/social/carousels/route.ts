@@ -5,7 +5,8 @@ import { authorizeRequest, limitRequest, readLimitedBody } from "@/lib/api-secur
 import { findCapability } from "@/providers/catalog";
 import type { ImageModelCapability } from "@/models/capabilities/image";
 import { carouselRoles, imageRatios, imageResolutions } from "@/social/carousel";
-import type { CarouselSlide, SocialProject } from "@/social/types";
+import { validateCarouselProject } from "@/social/carousel-server";
+import type { BrandSystem, CarouselSlide, SocialProject } from "@/social/types";
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError } from "@/workflows/types";
 import { getTask, initStore } from "@/lib/task-store";
@@ -22,7 +23,7 @@ const ratioSchema = z.string().regex(/^\d{1,2}:\d{1,2}$/).refine(value => {
     return w > 0 && h > 0 && h / w <= 3.5 && w / h <= 3.5;
 });
 const commandSchema = z.discriminatedUnion("action", [
-    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional() }).strict(),
+    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
     z.object({ action: z.literal("save"), id: z.uuid(), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slides: z.array(slideSchema).min(2).max(10) }).strict(),
     z.object({ action: z.literal("variant"), sourceId: z.uuid(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30) }).strict(),
 ]);
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
         const input = commandSchema.parse(JSON.parse(Buffer.from(await readLimitedBody(req, 32 * 1024)).toString("utf8")));
         if (input.action === "create") await requireCompany(input.companyId);
         await checkModel(input.modelId, input.aspectRatio, input.resolution);
+        const selectedModel = await findCapability("image", input.modelId) as ImageModelCapability;
         if (input.action === "variant") {
             const model = await findCapability("image", input.modelId) as ImageModelCapability;
             if (!model.media_slots.some(slot => slot.kind === "image" && !slot.required) && !getEditVariant(model)?.slots.some(slot => slot.kind === "image")) throw new WorkflowError("Para adaptar el mismo carrusel, el modelo debe admitir una imagen de referencia.", 400);
@@ -74,7 +76,9 @@ export async function POST(req: NextRequest) {
                 if (input.characterId && (!selectedCharacter || selectedCharacter.archivedAt)) throw new WorkflowError("El personaje ya no está disponible.", 400);
                 if ([...docs.keys()].filter(key => key.startsWith("social:")).length >= 500) throw new WorkflowError("El historial de proyectos está lleno.", 409);
                 const slides: CarouselSlide[] = carouselRoles(input.slideCount).map(role => ({ id: crypto.randomUUID(), role, title: "", body: "", visualPrompt: "", taskIds: [] }));
-                const project: SocialProject = { id: crypto.randomUUID(), name: input.name, brandId: input.brandId, companyId: input.companyId, character: selectedCharacter ? characterSnapshot(selectedCharacter) : undefined, format: "carousel", language: input.language, brief: input.brief, modelId: input.modelId, aspectRatio: input.aspectRatio, resolution: input.resolution, slideCount: slides.length, taskIds: [], slides, autoStory: input.autoStory ?? false, status: "draft", createdAt: now, updatedAt: now };
+                const brand = docs.get(`brand:${input.brandId}`) as BrandSystem;
+                const project: SocialProject = { id: crypto.randomUUID(), name: input.name, brandId: input.brandId, companyId: input.companyId, character: selectedCharacter ? characterSnapshot(selectedCharacter) : undefined, format: "carousel", language: input.language, brief: input.brief, modelId: input.modelId, aspectRatio: input.aspectRatio, resolution: input.resolution, fieldValues: input.fieldValues ?? {}, slideCount: slides.length, taskIds: [], slides, autoStory: input.autoStory ?? false, status: "draft", createdAt: now, updatedAt: now };
+                validateCarouselProject(project, brand, selectedModel);
                 docs.set(`social:${project.id}`, project);
                 return project;
             }

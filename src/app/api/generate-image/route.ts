@@ -54,7 +54,7 @@ async function generate(req: NextRequest) {
   if (carouselProjectId) {
     if (!/^[0-9a-f-]{36}$/i.test(carouselProjectId) || !/^[0-9a-f-]{36}$/i.test(carouselSlideId)) return NextResponse.json({ error: "Identificador de carrusel inválido." }, { status: 400 });
     try {
-      const slide = await prepareCarouselSlide(carouselProjectId, carouselSlideId, modelId, String(form.get("size_aspect") ?? "").trim(), String(form.get("size_resolution") ?? ""));
+      const slide = await prepareCarouselSlide(carouselProjectId, carouselSlideId, modelId, String(form.get("size_aspect") ?? "").trim(), String(form.get("size_resolution") ?? ""), imageCaps);
       prompt = slide.prompt;
       brand = slide.brand;
       character = slide.character;
@@ -80,7 +80,7 @@ async function generate(req: NextRequest) {
     if (!saved || saved.archivedAt) return NextResponse.json({ error: "El personaje ya no está disponible." }, { status: 404 });
     character = characterSnapshot(saved);
   }
-  if (character) prompt = [prompt, characterIdentityPrompt(character)].filter(Boolean).join("\n\n");
+  if (character && !carouselProjectId) prompt = [prompt, characterIdentityPrompt(character)].filter(Boolean).join("\n\n");
   if (caps.prompt_required && !prompt) {
     return NextResponse.json({ error: "ERR_PROMPT_REQUIRED" }, { status: 400 });
   }
@@ -88,6 +88,12 @@ async function generate(req: NextRequest) {
 
   let fieldValues: Record<string, unknown> = {};
   try { fieldValues = JSON.parse(String(form.get("field_values") ?? "{}")); } catch { }
+  // Saved carousel settings can outlive a provider catalog change. Do not send
+  // stale controls (for example APIMart quality/resolution) to a new endpoint.
+  if (carouselProjectId) {
+    const allowed = new Set(["n", "seed", ...imageCaps.custom_fields.map(field => field.id)]);
+    fieldValues = Object.fromEntries(Object.entries(fieldValues).filter(([key]) => allowed.has(key)));
+  }
 
   const requestedAspect = String(form.get("size_aspect") ?? "").trim();
   const supportedAspects = getImageAspectRatios(imageCaps).map(([value]) => value);

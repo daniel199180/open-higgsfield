@@ -44,9 +44,21 @@ function baseCapability(input: Partial<ModelCapabilities> & Pick<ModelCapabiliti
 }
 
 function fieldOptions(value: unknown): string[] {
+    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
     if (!value || typeof value !== "object") return [];
-    const descriptor = value as { values?: unknown[] };
-    return Array.isArray(descriptor.values) ? descriptor.values.filter((item): item is string => typeof item === "string") : [];
+    const descriptor = value as { values?: unknown[]; options?: unknown[] };
+    const options = descriptor.values ?? descriptor.options;
+    return Array.isArray(options) ? options.filter((item): item is string => typeof item === "string") : [];
+}
+
+function numericField(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    for (const key of ["max", "maximum", "max_length", "maxLength"]) {
+        if (typeof record[key] === "number" && Number.isFinite(record[key])) return record[key] as number;
+    }
+    return undefined;
 }
 
 function openRouterHeaders(connection: ProviderConnection): Record<string, string> {
@@ -85,6 +97,7 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
                 provider_model_id: id,
                 provider_connection_id: connection.id,
                 provider_mode: "native-image",
+                prompt_max: numericField(supported.prompt) ?? numericField(model.prompt_max),
                 media_slots: (architecture.input_modalities ?? []).includes("image")
                     ? [{ id: "input_references", label: "Reference images", kind: "image", multiple: true }] : [],
                 custom_fields: customFields,
@@ -203,6 +216,16 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     const id = String(model.id ?? model.model);
     const label = String(model.name ?? model.display_name ?? id);
     const image = mediaType === "image";
+    // APIMart's model list is not a universal schema. Only advertise options
+    // declared for this model; sending invented quality/reference fields makes
+    // otherwise valid carousel requests fail with an opaque 400.
+    const supported = (model.supported_parameters ?? model.parameters ?? {}) as Record<string, unknown>;
+    const ratios = fieldOptions(supported.aspect_ratio ?? model.aspect_ratios);
+    const resolutions = fieldOptions(supported.resolution ?? model.resolutions);
+    const qualities = fieldOptions(supported.quality);
+    const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities);
+    const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true;
+    const displayRatios = ratios.length ? ratios : image ? ["1:1"] : ["16:9", "9:16", "1:1"];
     return baseCapability({
         id: runtimeId("apimart", mediaType, connection.id, id),
         label,
@@ -214,14 +237,18 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
         provider_model_id: id,
         provider_connection_id: connection.id,
         provider_mode: image ? "native-image" : "video",
+        prompt_max: numericField(supported.prompt) ?? numericField(model.prompt_max),
         duration: image ? false : { options: ["3", "5", "8", "10", "15"], default: "5" },
-        aspect_ratio: { options: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"].map((ratio) => [ratio, ratio] as [string, string]), default: ["1:1", "1:1"] },
-        resolution_variant: image ? { options: ["1k", "2k", "4k"], default: "1k" } : { options: ["480p", "720p", "1080p"], default: "720p" },
+        // A single 1:1 fallback keeps text-only image generation usable when
+        // APIMart omits metadata, without claiming every model supports 4K or
+        // every canvas shape.
+        aspect_ratio: { options: displayRatios.map((ratio) => [ratio, ratio] as [string, string]), default: [displayRatios[0], displayRatios[0]] },
+        resolution_variant: image ? (resolutions.length ? { options: resolutions, default: resolutions[0] } : false) : { options: resolutions.length ? resolutions : ["480p", "720p", "1080p"], default: (resolutions.length ? resolutions : ["480p", "720p", "1080p"])[0] },
         media_slots: image
-            ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true }]
+            ? (acceptsReferences ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true }] : [])
             : [{ id: "start_image", label: "Primer fotograma", kind: "image" }, { id: "end_image", label: "Último fotograma", kind: "image" }],
         custom_fields: image
-            ? [{ id: "quality", label: "Calidad", type: "select", options: ["auto", "low", "medium", "high", "xhigh", "max"], default: "auto" }]
+            ? (qualities.length ? [{ id: "quality", label: "Calidad", type: "select", options: qualities, default: qualities[0] }] : [])
             : [{ id: "generate_audio", label: "Generar audio", type: "checkbox", default: false }],
         sort_key: 5500 - index,
     });

@@ -578,7 +578,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             form.append("size_resolution", project.resolution ?? "");
             form.append("social_project_id", project.id);
             form.append("social_slide_id", slide.id);
-            const values = project.modelId === imageModelId ? { ...imageFieldValues } : {};
+            const values = { ...(project.fieldValues ?? {}) };
             if (model.custom_fields?.some(field => field.id === "n")) values.n = 1;
             form.append("field_values", JSON.stringify(values));
             if (reference && referenceSlot) {
@@ -703,7 +703,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 if (imageModel.media_slots.some(slot => slot.required)) throw new Error("Este modelo necesita una imagen inicial obligatoria. Elige otro modelo de imagen para el carrusel.");
                 const response = await fetch("/api/social/carousels", {
                     method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action: "create", name: brief.split(/[.!?\n]/)[0].slice(0, 100) || "Nuevo carrusel", brief, brandId: selectedBrand.id, companyId: companySelection.selectedId || undefined, characterId: selectedCharacter?.id, modelId: imageModelId, aspectRatio: sizeAspect, resolution: sizeResolution, slideCount: carouselSlideCount, language: locale.startsWith("pt") ? "Português (Brasil)" : locale.startsWith("en") ? "English" : "Español", autoStory: true }),
+                    body: JSON.stringify({ action: "create", name: brief.split(/[.!?\n]/)[0].slice(0, 100) || "Nuevo carrusel", brief, brandId: selectedBrand.id, companyId: companySelection.selectedId || undefined, characterId: selectedCharacter?.id, modelId: imageModelId, aspectRatio: sizeAspect, resolution: sizeResolution, fieldValues: imageFieldValues, slideCount: carouselSlideCount, language: locale.startsWith("pt") ? "Português (Brasil)" : locale.startsWith("en") ? "English" : "Español", autoStory: true }),
                 });
                 const result = await response.json().catch(() => ({})) as { project?: SocialProject; error?: string };
                 if (!response.ok || !result.project) throw new Error(result.error || "No se pudo crear el carrusel.");

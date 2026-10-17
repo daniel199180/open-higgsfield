@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import sharp from "sharp";
-import { carouselRoles, carouselPrompt, imageRatios } from "../src/social/carousel";
+import { carouselBriefForSlide, carouselRoles, carouselPrompt, imageRatios } from "../src/social/carousel";
 import { carouselDimensions, imagesPdf, imagesZip } from "../src/social/carousel-export";
 import type { BrandSystem, SocialProject } from "../src/social/types";
 import { IMAGE_CAPABILITIES } from "../src/models/capabilities/image";
@@ -31,6 +31,20 @@ test("carousel chat prompt lets the image model write distinct copy for an empty
     assert.match(prompt, /Redacta e integra/);
     assert.match(prompt, /llamada a la acción/i);
     assert.doesNotMatch(prompt, /Titular:\s*$/m);
+});
+
+test("a structured brief sends each generation only its matching slide", () => {
+    const brief = [
+        "Reglas generales: mantén la marca y no inventes datos.",
+        "LÁMINA 1 — PORTADA\nTexto exacto: Bienvenida",
+        "LÁMINA 2 — BENEFICIO\nTexto exacto: Más claridad",
+        "LÁMINA 3 — CTA\nTexto exacto: Escríbenos",
+    ].join("\n\n");
+    const second = carouselBriefForSlide(brief, 1);
+    assert.equal(second.structured, true);
+    assert.match(second.content, /Reglas generales/);
+    assert.match(second.content, /LÁMINA 2/);
+    assert.doesNotMatch(second.content, /LÁMINA 1|LÁMINA 3/);
 });
 
 test("ratio helpers only expose supported canvases", () => {

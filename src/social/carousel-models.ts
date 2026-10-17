@@ -1,19 +1,21 @@
-import { getImageAspectRatios } from "@/models/capabilities/image-helpers";
 import type { ImageModelCapability } from "@/models/capabilities/image";
 
 /**
- * A carousel needs a visual anchor (brand assets and the cover), not a batch
- * of unrelated variations. Keep this list intentionally small and based on
- * the runtime OpenRouter catalog rather than provider names shown in the UI.
+ * Provider catalogs are not consistent about publishing image-input metadata.
+ * Identify the two supported carousel families independently of that metadata,
+ * then let their provider adapters submit references using their documented
+ * image-input field.
  */
-export function isCarouselModel(model: ImageModelCapability | undefined): model is ImageModelCapability {
-    if (!model || model.provider !== "openrouter" || model.media_slots.some(slot => slot.required)) return false;
-    const id = (model.provider_model_id ?? "").toLocaleLowerCase();
-    const isGptImage = /^openai\/(?:gpt-image|gpt-?5(?:\.\d+)?-image)/.test(id);
-    const isNanoBanana = /^google\/gemini-(?:2\.5|3(?:\.\d+)?)-(?:flash|pro)(?:-lite)?-image/.test(id);
-    return (isGptImage || isNanoBanana)
-        && model.media_slots.some(slot => slot.kind === "image")
-        && getImageAspectRatios(model).length > 0;
+export function isCarouselProviderModel(provider: ImageModelCapability["provider"], providerModelId?: string, label?: string): boolean {
+    if (provider !== "openrouter" && provider !== "apimart") return false;
+    const identity = `${providerModelId ?? ""} ${label ?? ""}`.toLocaleLowerCase();
+    const isGptImage = /(?:^|[\s/_-])gpt[\s/_-]?image(?:[\s/_-]?\d|\b)|openai[\s/_-]+gpt[\s/_-]?image/.test(identity);
+    const isNanoBanana = /nano[\s/_-]?banana|gemini[\s/_-]?(?:2\.5|3(?:\.\d+)?)[\s/_-]?(?:flash|pro)(?:[\s/_-]?(?:lite|preview))?[\s/_-]?image/.test(identity);
+    return isGptImage || isNanoBanana;
 }
 
-export const carouselModelHint = "Para carruseles: GPT Image y Nano Banana con referencias visuales.";
+export function isCarouselModel(model: ImageModelCapability | undefined): model is ImageModelCapability {
+    return !!model && isCarouselProviderModel(model.provider, model.provider_model_id, model.label);
+}
+
+export const carouselModelHint = "GPT Image y Nano Banana de OpenRouter o APIMart. Cada página se genera por separado.";

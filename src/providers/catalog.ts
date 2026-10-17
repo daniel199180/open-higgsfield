@@ -4,6 +4,7 @@ import type { CustomFieldCapability, ModelCapabilities } from "@/models/capabili
 import { expandApiMarketConnections, getConnectionForProvider, getStoredConnections, type ProviderConnection } from "@/lib/connection-store";
 import { listApiMarketTools } from "@/providers/api-market-client";
 import { providerFetch } from "./secure-fetch";
+import { isCarouselProviderModel } from "@/social/carousel-models";
 
 type MediaType = "image" | "video";
 
@@ -98,7 +99,9 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
                 provider_connection_id: connection.id,
                 provider_mode: "native-image",
                 prompt_max: numericField(supported.prompt) ?? numericField(model.prompt_max),
-                media_slots: (architecture.input_modalities ?? []).includes("image")
+                // GPT Image and Nano Banana accept input references even when
+                // a provider catalog omits input_modalities for that endpoint.
+                media_slots: (architecture.input_modalities ?? []).includes("image") || isCarouselProviderModel("openrouter", id, String(model.name ?? ""))
                     ? [{ id: "input_references", label: "Reference images", kind: "image", multiple: true }] : [],
                 custom_fields: customFields,
                 sort_key: 7000 - index,
@@ -202,7 +205,7 @@ async function apiMarketCatalog(connection: ProviderConnection, mediaType: Media
 }
 
 const APIMART_VIDEO_MODEL = /(?:video|seedance|kling|wan[-_.]?2|veo|sora|hunyuan|runway|luma|pika|mochi|cogvideo)/i;
-const APIMART_IMAGE_MODEL = /(?:image|imagen|banana|seedream|flux|ideogram|midjourney|recraft|qwen[-_.]?image|z[-_.]?image|grok[-_.]?imagine|stable[-_.]?diffusion|sdxl)/i;
+const APIMART_IMAGE_MODEL = /(?:image|imagen|banana|seedream|flux|ideogram|midjourney|recraft|qwen[-_.]?image|z[-_.]?image|grok[-_.]?imagine|stable[-_.]?diffusion|sdxl|gpt[-_.]?image|openai[-_.]?gpt|gemini[-_.]?(?:2\.5|3))/i;
 
 function apimartModelMediaType(model: Record<string, unknown>): MediaType | undefined {
     const id = String(model.id ?? model.model ?? "");
@@ -224,7 +227,7 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     const resolutions = fieldOptions(supported.resolution ?? model.resolutions);
     const qualities = fieldOptions(supported.quality);
     const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities);
-    const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true;
+    const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true || isCarouselProviderModel("apimart", id, label);
     const displayRatios = ratios.length ? ratios : image ? ["1:1"] : ["16:9", "9:16", "1:1"];
     return baseCapability({
         id: runtimeId("apimart", mediaType, connection.id, id),

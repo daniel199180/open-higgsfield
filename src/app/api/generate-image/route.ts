@@ -49,7 +49,7 @@ async function generate(req: NextRequest) {
   const carouselSlideId = String(form.get("social_slide_id") ?? "");
   if (Boolean(carouselProjectId) !== Boolean(carouselSlideId)) return NextResponse.json({ error: "Indica el carrusel y su diapositiva." }, { status: 400 });
   if (carouselProjectId && !isCarouselModel(imageCaps)) {
-    return NextResponse.json({ error: "Para carruseles selecciona un modelo GPT Image o Nano Banana de OpenRouter que admita imágenes de referencia." }, { status: 400 });
+    return NextResponse.json({ error: "Para carruseles selecciona GPT Image o Nano Banana de OpenRouter o APIMart." }, { status: 400 });
   }
   let prompt = String(form.get("prompt") ?? "").trim();
   let brand: BrandSystem | undefined;

@@ -56,15 +56,16 @@ test("ratio helpers only expose supported canvases", () => {
     assert.throws(() => carouselDimensions("auto"));
 });
 
-test("carousel accepts only reference-capable OpenRouter GPT Image and Nano Banana models", () => {
+test("carousel accepts GPT Image and Nano Banana from OpenRouter or APIMart despite incomplete catalog metadata", () => {
     const base: ImageModelCapability = {
         id: "runtime", label: "Runtime", family: "OpenRouter", variant: "", group: "OpenRouter", provider: "openrouter", provider_model_id: "google/gemini-3.1-flash-image", provider_connection_id: "connection", provider_mode: "native-image", prompt_required: true, prompt_supported: true,
         duration: false, aspect_ratio: { options: [["1:1", "1:1"]], default: ["1:1", "1:1"] }, size: false, resolution_variant: false, negative_prompt: false, cfg_scale: false, style: false, shot_type: false, prompt_expansion: false, elements: false,
         media_slots: [{ id: "input_references", label: "References", kind: "image", multiple: true }], custom_fields: [], has_edit_variant: false,
     };
     assert.equal(isCarouselModel(base), true);
+    assert.equal(isCarouselModel({ ...base, provider: "apimart", provider_model_id: "gpt-image-2.5", label: "GPT Image 2.5", media_slots: [] }), true);
+    assert.equal(isCarouselModel({ ...base, provider: "apimart", provider_model_id: "nano-banana-pro", label: "Nano Banana Pro", media_slots: [] }), true);
     assert.equal(isCarouselModel({ ...base, provider_model_id: "bytedance-seed/seedream-4.5" }), false);
-    assert.equal(isCarouselModel({ ...base, media_slots: [] }), false);
 });
 
 test("carousel ZIP and PDF contain ordered pages without paid generation", async () => {

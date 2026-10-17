@@ -25,6 +25,7 @@ export function ImageEditingStudio({ onBack, registerBeforeLeave }: { onBack: ()
     const [savedDocuments, setSavedDocuments] = useState<SavedDocument[]>([]);
     const [documentsError, setDocumentsError] = useState("");
     const inFlight = useRef(false);
+    const handledQuerySelection = useRef(false);
     useEffect(() => {
         if (!pickerOpen) return;
         let active = true;
@@ -47,6 +48,25 @@ export function ImageEditingStudio({ onBack, registerBeforeLeave }: { onBack: ()
         .flatMap((task) => Array.from({ length: Math.min(10, Math.max(task.result_paths?.length ?? 0, task.result_urls?.length ?? 0)) }, (_, index) => ({
             taskId: task.task_id, index, imageUrl: `/api/download/${encodeURIComponent(task.task_id)}?index=${index}`, prompt: task.prompt,
         })).filter(({ index }) => !!task.result_paths?.[index] || /^data:image\/(?:png|jpeg|webp);base64,/.test(task.result_urls?.[index] ?? "")));
+
+    useEffect(() => {
+        if (handledQuerySelection.current || selected) return;
+        const query = new URLSearchParams(window.location.search);
+        const taskId = query.get("task");
+        const index = Number(query.get("index") ?? "0");
+        if (!taskId || !Number.isInteger(index) || index < 0) return;
+        const task = tasks.find(item => item.task_id === taskId);
+        if (!task || task.status !== "COMPLETED") return;
+        const available = Boolean(task.result_paths?.[index]) || /^data:image\/(?:png|jpeg|webp);base64,/.test(task.result_urls?.[index] ?? "");
+        if (!available) return;
+        handledQuerySelection.current = true;
+        setSelected({ taskId, index, imageUrl: `/api/download/${encodeURIComponent(taskId)}?index=${index}`, prompt: task.prompt, documentId: crypto.randomUUID() });
+        query.delete("task");
+        query.delete("index");
+        const url = new URL(window.location.href);
+        url.search = query.toString();
+        window.history.replaceState(null, "", url);
+    }, [selected, tasks]);
 
     async function uploadImage(file: File | undefined) {
         if (!file || inFlight.current) return;

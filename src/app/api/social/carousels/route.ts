@@ -6,6 +6,7 @@ import { findCapability } from "@/providers/catalog";
 import type { ImageModelCapability } from "@/models/capabilities/image";
 import { carouselRoles, imageRatios, imageResolutions } from "@/social/carousel";
 import { validateCarouselProject } from "@/social/carousel-server";
+import { isCarouselModel } from "@/social/carousel-models";
 import type { BrandSystem, CarouselSlide, SocialProject } from "@/social/types";
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError } from "@/workflows/types";
@@ -31,6 +32,7 @@ const commandSchema = z.discriminatedUnion("action", [
 async function checkModel(modelId: string, ratio: string, resolution: string) {
     const model = await findCapability("image", modelId) as ImageModelCapability | undefined;
     if (!model) throw new WorkflowError("Selecciona un modelo de imagen disponible.", 400);
+    if (!isCarouselModel(model)) throw new WorkflowError("Para carruseles selecciona un modelo GPT Image o Nano Banana de OpenRouter que admita imágenes de referencia.", 400);
     if (model.media_slots.some(slot => slot.required)) throw new WorkflowError("Este modelo necesita una imagen inicial. Elige un modelo de generación sin referencia obligatoria.", 400);
     const ratios = imageRatios(model);
     if (ratios.length > 0 && !ratios.includes(ratio)) throw new WorkflowError("El modelo no admite esa proporción.", 400);

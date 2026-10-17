@@ -5,6 +5,8 @@ import { carouselBriefForSlide, carouselRoles, carouselPrompt, imageRatios } fro
 import { carouselDimensions, imagesPdf, imagesZip } from "../src/social/carousel-export";
 import type { BrandSystem, SocialProject } from "../src/social/types";
 import { IMAGE_CAPABILITIES } from "../src/models/capabilities/image";
+import { isCarouselModel } from "../src/social/carousel-models";
+import type { ImageModelCapability } from "../src/models/capabilities/image";
 
 test("carousel storyboard has a cover and CTA, with one ordered role per page", () => {
     assert.deepEqual(carouselRoles(2), ["Portada", "Llamada a la acción"]);
@@ -52,6 +54,17 @@ test("ratio helpers only expose supported canvases", () => {
     assert.ok(imageRatios(model).includes("4:5"));
     assert.deepEqual(carouselDimensions("4:5"), { width: 1080, height: 1350 });
     assert.throws(() => carouselDimensions("auto"));
+});
+
+test("carousel accepts only reference-capable OpenRouter GPT Image and Nano Banana models", () => {
+    const base: ImageModelCapability = {
+        id: "runtime", label: "Runtime", family: "OpenRouter", variant: "", group: "OpenRouter", provider: "openrouter", provider_model_id: "google/gemini-3.1-flash-image", provider_connection_id: "connection", provider_mode: "native-image", prompt_required: true, prompt_supported: true,
+        duration: false, aspect_ratio: { options: [["1:1", "1:1"]], default: ["1:1", "1:1"] }, size: false, resolution_variant: false, negative_prompt: false, cfg_scale: false, style: false, shot_type: false, prompt_expansion: false, elements: false,
+        media_slots: [{ id: "input_references", label: "References", kind: "image", multiple: true }], custom_fields: [], has_edit_variant: false,
+    };
+    assert.equal(isCarouselModel(base), true);
+    assert.equal(isCarouselModel({ ...base, provider_model_id: "bytedance-seed/seedream-4.5" }), false);
+    assert.equal(isCarouselModel({ ...base, media_slots: [] }), false);
 });
 
 test("carousel ZIP and PDF contain ordered pages without paid generation", async () => {

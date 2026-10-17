@@ -45,6 +45,7 @@ import { brandLogoAssetIds, brandImageAssetIds, brandTypographyPrompt } from "@/
 import { PillPopover } from "@/components/command-bar/PillPopover";
 import { StudioModePill, type StudioMode } from "@/components/studio/StudioModePill";
 import { LogoComposer } from "@/components/command-bar/LogoComposer";
+import { isCarouselModel } from "@/social/carousel-models";
 
 const schema = z.object({ prompt: z.string().max(2000) });
 type FormData = z.infer<typeof schema>;
@@ -517,8 +518,8 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     useEffect(() => {
         if (mode !== "carousel") return;
         const current = IMAGE_CAPABILITIES[imageModelId];
-        if (current && !current.media_slots.some(slot => slot.required) && getImageAspectRatios(current).length) return;
-        const fallback = Object.values(IMAGE_CAPABILITIES).find(model => hasActiveModelApi(model) && !model.media_slots.some(slot => slot.required) && getImageAspectRatios(model).length);
+        if (isCarouselModel(current) && hasActiveModelApi(current)) return;
+        const fallback = Object.values(IMAGE_CAPABILITIES).find(model => hasActiveModelApi(model) && isCarouselModel(model));
         if (fallback) handleImageModelChange(fallback.id);
     }, [mode, imageModelId, handleImageModelChange]);
 

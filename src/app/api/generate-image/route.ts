@@ -19,6 +19,7 @@ import type { BrandSystem, Character, CharacterSnapshot } from "@/social/types";
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError } from "@/workflows/types";
 import { requireCompany } from "@/library/server";
+import { isCarouselModel } from "@/social/carousel-models";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -47,6 +48,9 @@ async function generate(req: NextRequest) {
   const carouselProjectId = String(form.get("social_project_id") ?? "");
   const carouselSlideId = String(form.get("social_slide_id") ?? "");
   if (Boolean(carouselProjectId) !== Boolean(carouselSlideId)) return NextResponse.json({ error: "Indica el carrusel y su diapositiva." }, { status: 400 });
+  if (carouselProjectId && !isCarouselModel(imageCaps)) {
+    return NextResponse.json({ error: "Para carruseles selecciona un modelo GPT Image o Nano Banana de OpenRouter que admita imágenes de referencia." }, { status: 400 });
+  }
   let prompt = String(form.get("prompt") ?? "").trim();
   let brand: BrandSystem | undefined;
   let character: CharacterSnapshot | undefined;
@@ -93,6 +97,9 @@ async function generate(req: NextRequest) {
   if (carouselProjectId) {
     const allowed = new Set(["n", "seed", ...imageCaps.custom_fields.map(field => field.id)]);
     fieldValues = Object.fromEntries(Object.entries(fieldValues).filter(([key]) => allowed.has(key)));
+    // A carousel is a sequence of distinct pages. A batch here would create
+    // competing variants of one page and break the cover-reference chain.
+    fieldValues.n = 1;
   }
 
   const requestedAspect = String(form.get("size_aspect") ?? "").trim();

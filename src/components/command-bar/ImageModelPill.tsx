@@ -4,8 +4,9 @@ import { useState } from "react";
 import { Wand2, Check, Search } from "lucide-react";
 import { PillPopover } from "./PillPopover";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
-import { getEditVariant, getImageAspectRatios } from "@/models/capabilities/image-helpers";
+import { getEditVariant } from "@/models/capabilities/image-helpers";
 import { hasActiveModelApi, modelProviderName } from "@/lib/model-availability";
+import { carouselModelHint, isCarouselModel } from "@/social/carousel-models";
 
 /** Check if a model accepts image input (media_slots or edit variant slots) */
 function modelAcceptsImageInput(id: string): boolean {
@@ -35,7 +36,7 @@ export function ImageModelPill({ modelId, onModelChange, slotFiles, carouselMode
     const visibleModels = Object.values(IMAGE_CAPABILITIES)
         .filter(hasActiveModelApi)
         .filter((candidate) => !hasAnyFiles || modelAcceptsImageInput(candidate.id))
-        .filter((candidate) => !carouselMode || (!candidate.media_slots.some((slot) => slot.required) && getImageAspectRatios(candidate).length > 0))
+        .filter((candidate) => !carouselMode || isCarouselModel(candidate))
         .filter((candidate) => !normalizedQuery || `${candidate.label} ${candidate.provider_model_id ?? ""} ${modelProviderName(candidate)}`.toLocaleLowerCase().includes(normalizedQuery))
         .sort((left, right) => (right.sort_key ?? 0) - (left.sort_key ?? 0) || left.label.localeCompare(right.label));
 
@@ -52,7 +53,8 @@ export function ImageModelPill({ modelId, onModelChange, slotFiles, carouselMode
                 </>
             }
         >
-            <p className="mb-2 shrink-0 px-1 text-[10px] font-extrabold uppercase tracking-[.08em]" style={{ color: "rgba(244,247,251,.44)" }}>Modelos con API activa</p>
+            <p className="mb-2 shrink-0 px-1 text-[10px] font-extrabold uppercase tracking-[.08em]" style={{ color: "rgba(244,247,251,.44)" }}>{carouselMode ? "Modelos compatibles con carruseles" : "Modelos con API activa"}</p>
+            {carouselMode && <p className="mb-3 shrink-0 px-1 text-[11px] leading-relaxed text-white/45">{carouselModelHint}</p>}
             <label className="mb-3 flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 text-white/60"><Search className="h-3.5 w-3.5" /><input aria-label="Buscar modelos de imagen" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar modelo o proveedor…" className="w-full bg-transparent py-2 text-xs text-white outline-none placeholder:text-white/35" /></label>
             <div className="model-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
                 <div className="space-y-0.5 pr-1">{visibleModels.map((candidate) => {

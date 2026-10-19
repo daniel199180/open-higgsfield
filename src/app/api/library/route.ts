@@ -66,6 +66,7 @@ function buildLibraryItems(
             searchText: project.slides?.map(slide => `${slide.title} ${slide.body} ${slide.visualPrompt}`).join(" "),
             date: project.createdAt, status: project.status,
             preview: taskId ? `/api/download/${encodeURIComponent(taskId)}?index=0` : undefined,
+            href: `/api/social/carousels/${encodeURIComponent(project.id)}/export?format=zip`,
             carouselId: project.id,
         });
     }
@@ -92,6 +93,7 @@ function buildLibraryItems(
             kind: "workflow", id: run.id, companyId: run.companyId, title: run.name,
             detail: "Ejecución de workflow", date: run.createdAt, status: run.status,
             preview: assetId ? `/api/workflows/assets/${assetId}` : undefined,
+            href: assetId ? `/api/workflows/assets/${assetId}?download=1` : undefined,
             videoPreview: asset?.kind === "video", workflowId: run.workflowId, runId: run.id,
         });
     }

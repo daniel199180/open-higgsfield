@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- authenticated generated media previews */
 import { useCallback, useEffect, useState } from "react";
-import { Folder, FolderPlus, Search, ArrowLeft, Download, Pencil } from "lucide-react";
+import { Folder, FolderPlus, Search, ArrowLeft, Download, Pencil, Image as ImageIcon, Video } from "lucide-react";
 import type { CompanyFolder, CompanyLibraryItem, CompanyLibraryPage, LibraryKind } from "@/library/types";
 
 type Catalog = { companies: CompanyFolder[]; items: CompanyLibraryItem[]; page: CompanyLibraryPage; counts: Record<string, number> };
@@ -59,17 +59,6 @@ export function CompanyLibrary({ onBack }: { onBack: () => void }) {
         } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo renombrar la empresa."); }
         finally { setBusy(false); }
     }
-    async function move(item: CompanyLibraryItem, nextId: string) {
-        setBusy(true); setError("");
-        try {
-            const response = await fetch("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: item.kind, id: item.id, companyId: nextId || null }) });
-            const data = await response.json() as { error?: string };
-            if (!response.ok) throw new Error(data.error || "No se pudo mover la generación.");
-            await refresh();
-        } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo mover la generación."); }
-        finally { setBusy(false); }
-    }
-
     return <main className="min-h-screen bg-black px-4 pb-20 pt-20 text-white sm:px-8">
         <div className="mx-auto max-w-7xl">
             <button type="button" onClick={onBack} className="mb-6 inline-flex items-center gap-2 text-sm text-white/65 hover:text-white"><ArrowLeft size={16} /> Volver al estudio</button>
@@ -78,7 +67,21 @@ export function CompanyLibrary({ onBack }: { onBack: () => void }) {
             <nav aria-label="Carpetas de empresas" className="mb-7 flex gap-2 overflow-x-auto pb-2">{[{ id: "all", name: "Todas" }, ...catalog.companies.map(item => ({ id: item.id, name: item.name })), { id: "unassigned", name: "Sin empresa" }].map(entry => <div key={entry.id} className={`flex shrink-0 items-center rounded-xl border ${folder === entry.id ? "border-[#ff4d4d]/65 bg-[#ff4d4d]/15" : "border-white/10 bg-[#111]"}`}><button type="button" onClick={() => { setFolder(entry.id); setPage(1); }} className="inline-flex items-center gap-2 px-3 py-2 text-sm"><Folder size={15} className="text-[#ff4d4d]" />{entry.name}<span className="text-xs text-white/45">{catalog.counts[entry.id] ?? 0}</span></button>{catalog.companies.some(item => item.id === entry.id) && <button type="button" aria-label={`Renombrar ${entry.name}`} title="Renombrar" onClick={() => void renameCompany(catalog.companies.find(item => item.id === entry.id)!)} className="pr-3 text-white/45 hover:text-white"><Pencil size={13} /></button>}</div>)}</nav>
             <div className="mb-5 flex flex-wrap gap-3"><label className="flex min-w-56 flex-1 items-center gap-2 rounded-xl border border-white/15 bg-[#111] px-3"><Search size={16} className="text-white/45" /><input aria-label="Buscar generaciones" value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} placeholder="Buscar por descripción, modelo o ID…" className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-white/35" /></label><select aria-label="Filtrar por tipo" value={kind} onChange={event => { setKind(event.target.value as LibraryKind | "all"); setPage(1); }} className="rounded-xl border border-white/15 bg-[#111] px-3 py-2 text-sm"><option value="all">Todos los tipos</option>{(Object.keys(labels) as LibraryKind[]).map(key => <option key={key} value={key}>{labels[key]}</option>)}</select></div>
             <p className="mb-4 text-xs text-white/45">{catalog.page.total} resultado{catalog.page.total === 1 ? "" : "s"}{busy ? " · Guardando…" : ""}</p>
-            {loading ? <p className="py-20 text-center text-sm text-white/50">Cargando generaciones…</p> : catalog.items.length === 0 ? <p className="rounded-2xl border border-dashed border-white/15 p-12 text-center text-sm text-white/50">No hay generaciones con estos filtros.</p> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{catalog.items.map((item, index) => <article key={`${item.kind}:${item.id}:${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-[#111]"><div className="grid aspect-[4/3] place-items-center overflow-hidden bg-[#080808]">{(item.kind === "video" || item.videoPreview) && item.preview ? <video src={item.preview} controls preload="metadata" className="h-full w-full object-contain" /> : item.preview ? <a href={item.href || item.preview} target="_blank" rel="noreferrer" className="h-full w-full"><img src={item.preview} alt={item.title} className="h-full w-full object-contain" /></a> : <Folder size={34} className="text-white/20" />}</div><div className="space-y-2 p-4"><div className="flex items-center justify-between gap-2 text-xs"><span className="font-semibold text-[#ff4d4d]">{labels[item.kind]}</span><time className="text-white/40">{item.date ? new Date(item.date).toLocaleDateString("es") : ""}</time></div><h2 className="line-clamp-2 min-h-10 text-sm font-medium">{item.title}</h2><p className="line-clamp-1 text-xs text-white/45">{item.status && item.status !== "COMPLETED" ? `${item.status} · ` : ""}{item.detail}</p>{item.audio && <audio controls preload="none" src={item.audio} className="w-full" />}<div className="flex items-center justify-between gap-2 pt-1">{item.carouselId ? <a href={`?mode=carousel&carousel=${encodeURIComponent(item.carouselId)}`} className="text-xs text-white/70 hover:text-white">Abrir carrusel</a> : item.runId && item.workflowId ? <a href={`?workspace=workflows&workflow=${encodeURIComponent(item.workflowId)}&run=${encodeURIComponent(item.runId)}`} className="text-xs text-white/70 hover:text-white">Abrir ejecución</a> : item.href ? <a href={item.href} target="_blank" rel="noreferrer" aria-label={`Abrir ${labels[item.kind].toLowerCase()}`} className="text-white/65 hover:text-white"><Download size={16} /></a> : <span /> }<select aria-label={`Empresa para ${labels[item.kind].toLowerCase()} ${item.title.slice(0, 40)}`} disabled={busy} value={item.companyId ?? ""} onChange={event => void move(item, event.target.value)} className="max-w-40 rounded-lg border border-white/15 bg-[#191919] px-2 py-1.5 text-xs text-white disabled:opacity-50"><option value="">Sin empresa</option>{catalog.companies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></div></div></article>)}</div>}
+            {loading ? <p className="py-20 text-center text-sm text-white/50">Cargando generaciones…</p> : catalog.items.length === 0 ? <p className="rounded-2xl border border-dashed border-white/15 p-12 text-center text-sm text-white/50">No hay generaciones con estos filtros.</p> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{catalog.items.map((item, index) => {
+                const isVideo = item.kind === "video" || item.videoPreview;
+                const mediaLabel = isVideo ? "Video" : item.kind === "image" ? "Imagen" : labels[item.kind];
+                const MediaIcon = isVideo ? Video : ImageIcon;
+                return <article key={`${item.kind}:${item.id}:${index}`} className="overflow-hidden rounded-2xl border border-white/10 bg-[#111]">
+                    <div className="relative grid aspect-[4/3] place-items-center overflow-hidden bg-[#080808]">
+                        {isVideo && item.preview ? <video src={item.preview} muted playsInline preload="metadata" aria-label={item.title} className="h-full w-full object-contain" /> : item.preview ? <img src={item.preview} alt={item.title} className="h-full w-full object-contain" /> : <Folder size={34} className="text-white/20" />}
+                        <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-sm"><MediaIcon size={13} />{mediaLabel}</span>
+                    </div>
+                    <div className="space-y-3 p-4">
+                        <p className="line-clamp-3 min-h-[3.75rem] text-sm leading-5 text-white/85">{item.title}</p>
+                        {item.href && <a href={item.href} download target="_blank" rel="noreferrer" aria-label={`Descargar ${mediaLabel.toLowerCase()}`} className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-xs font-medium text-white/75 transition hover:border-white/35 hover:text-white"><Download size={14} />Descargar</a>}
+                    </div>
+                </article>;
+            })}</div>}
             {catalog.page.totalPages > 1 && <nav aria-label="Paginación de archivos" className="mt-8 flex items-center justify-center gap-3"><button type="button" disabled={page <= 1 || loading} onClick={() => setPage(current => current - 1)} className="rounded-xl border border-white/20 px-4 py-2 text-sm text-white disabled:opacity-40">Anterior</button><span className="text-xs text-white/55">Página {catalog.page.page} de {catalog.page.totalPages} · 15 por página</span><button type="button" disabled={page >= catalog.page.totalPages || loading} onClick={() => setPage(current => current + 1)} className="rounded-xl border border-white/20 px-4 py-2 text-sm text-white disabled:opacity-40">Siguiente</button></nav>}
         </div>
     </main>;

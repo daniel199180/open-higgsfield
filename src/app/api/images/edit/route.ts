@@ -16,6 +16,7 @@ import type { ModelCapabilities } from "@/models/capabilities/types";
 import { getCatalog } from "@/providers/catalog";
 import { providerFetch } from "@/providers/secure-fetch";
 import { providerImageReference } from "@/lib/image-reference";
+import { MAX_EDITOR_MODEL_ID_LENGTH } from "@/lib/image-edit-validation";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -180,7 +181,7 @@ async function editImage(req: NextRequest) {
     try {
         const form = await req.formData();
         const prompt = oneText(form, "prompt", 3000).trim();
-        const model = oneText(form, "model", 80);
+        const model = oneText(form, "model", MAX_EDITOR_MODEL_ID_LENGTH);
         const aspectRatio = oneText(form, "aspectRatio", 20);
         const quality = oneText(form, "quality", 20);
         const operation = oneText(form, "operation", 10);

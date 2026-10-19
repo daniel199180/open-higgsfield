@@ -5,6 +5,7 @@ import { DEFAULT_OPENROUTER_EDIT_MODEL, isOpenRouterEditModel, OPENROUTER_EDIT_M
 import { calculateOutpaintLayout, planOutpaint } from "../src/lib/image-outpaint";
 import { finishOutpaint, lockOutpaintOriginal, makeOutpaintGuide } from "../src/lib/image-outpaint-server";
 import { editGuideForOpenRouter, ImageEditInputError, maskForImageEdit, normalizeImageEditInput, parseImageEditComments, regionGuideForOpenRouter } from "../src/lib/image-edit-source";
+import { MAX_EDITOR_MODEL_ID_LENGTH } from "../src/lib/image-edit-validation";
 
 test("image editor offers only compatible OpenRouter GPT Image models", () => {
     assert.equal(DEFAULT_OPENROUTER_EDIT_MODEL, "openai/gpt-image-2.5-sunburst");
@@ -18,6 +19,12 @@ test("image editor offers only compatible OpenRouter GPT Image models", () => {
     assert.equal(supportsOpenRouterEditOptions(compatible, "low", "1:1", 1), false);
     assert.deepEqual(supportedOpenRouterEditRatios(compatible), ["auto", "1:1"]);
     assert.deepEqual(availableOpenRouterEditModels([{ ...compatible, architecture: { input_modalities: ["text"], output_modalities: ["image"] } }]), []);
+});
+
+test("managed connection model IDs fit the editor request contract", () => {
+    const modelId = `openrouter:image:${encodeURIComponent("550e8400-e29b-41d4-a716-446655440000")}:${encodeURIComponent(DEFAULT_OPENROUTER_EDIT_MODEL)}`;
+    assert.ok(modelId.length > 80, `regression fixture must cover the old limit: ${modelId.length}`);
+    assert.ok(modelId.length <= MAX_EDITOR_MODEL_ID_LENGTH);
 });
 
 test("outpainting expands without cropping and positions the original on every side", () => {

@@ -21,13 +21,26 @@ test("design systems persist references and prohibitions, validate mentions, and
     const { saveAsset } = await import("../src/workflows/assets");
     const image = await saveAsset(await sharp({ create: { width: 20, height: 20, channels: 4, background: "#ffffff00" } }).png().toBuffer(), "image");
     const headers = { "Content-Type": "application/json", Origin: "http://localhost:3000", Cookie: `${auth.COOKIE_NAME}=${admin.token}` };
-    const post = (brand: unknown, cookie = headers.Cookie) => POST(new NextRequest("http://localhost:3000/api/social", { method: "POST", headers: { ...headers, Cookie: cookie }, body: JSON.stringify({ action: "save-brand", brand }) }));
+    const command = (body: unknown, cookie = headers.Cookie) => POST(new NextRequest("http://localhost:3000/api/social", { method: "POST", headers: { ...headers, Cookie: cookie }, body: JSON.stringify(body) }));
+    const post = (brand: unknown, cookie = headers.Cookie) => command({ action: "save-brand", brand }, cookie);
     const draft = { name: "Prueba", primaryColor: "#000000", secondaryColor: "#ffffff", accentColor: "#ff0000", headingFont: "Inter", bodyFont: "Inter", voice: "Clara", visualRules: "Composición de @ejemplo", references: [{ assetId: image.id, name: "ejemplo" }], negativePrompt: "No añadir texto inventado", logoAssetIds: [image.id] };
     assert.equal((await post(draft, "")).status, 401);
     const created = await post(draft); assert.equal(created.status, 200);
     const saved = (await created.json()).brand;
     assert.equal(saved.subheadingFont, draft.headingFont);
     assert.equal(saved.secondaryBodyFont, draft.bodyFont);
+    const duplicatedResponse = await command({ action: "duplicate-brand", id: saved.id });
+    assert.equal(duplicatedResponse.status, 201);
+    const duplicated = (await duplicatedResponse.json()).brand;
+    assert.notEqual(duplicated.id, saved.id);
+    assert.equal(duplicated.name, "Prueba (copia)");
+    assert.deepEqual(duplicated.references, saved.references);
+    assert.deepEqual(duplicated.logoAssetIds, saved.logoAssetIds);
+    assert.notEqual(duplicated.createdAt, saved.createdAt);
+    const duplicatedEdit = await post(brandSaveInput({ ...duplicated, name: "Copia editada" }));
+    assert.equal(duplicatedEdit.status, 200);
+    const originalAfterDuplicateEdit = await GET(new NextRequest("http://localhost:3000/api/social", { headers }));
+    assert.equal((await originalAfterDuplicateEdit.json()).brands.find((item: { id: string }) => item.id === saved.id).name, "Prueba");
     const fourFonts = await post(brandSaveInput({ ...saved, subheadingFont: "Oswald", secondaryBodyFont: "Lora" }));
     assert.equal(fourFonts.status, 200);
     Object.assign(saved, (await fourFonts.json()).brand);
@@ -49,7 +62,7 @@ test("design systems persist references and prohibitions, validate mentions, and
     assert.equal((await post({ ...draft, secondaryBodyFont: "x".repeat(81) })).status, 400);
     const light = await GET(new NextRequest("http://localhost:3000/api/social?includeAssets=0", { headers }));
     const lightweight = await light.json();
-    assert.deepEqual(lightweight.assets, []); assert.equal(lightweight.brands.length, 1);
+    assert.deepEqual(lightweight.assets, []); assert.equal(lightweight.brands.length, 2);
     // The font catalogue is authenticated and coalesces parallel requests.
     const originalFetch = globalThis.fetch;
     let calls = 0;

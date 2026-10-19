@@ -30,6 +30,7 @@ const brandSchema = z.object({
 }).strict();
 const commandSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("save-brand"), brand: brandSchema }).strict(),
+    z.object({ action: z.literal("duplicate-brand"), id: z.uuid() }).strict(),
     z.object({ action: z.literal("delete-brand"), id: z.uuid() }).strict(),
     z.object({ action: z.literal("save-project"), project: z.object({
         id: z.uuid().optional(), name: z.string().trim().min(1).max(100), brandId: z.uuid(),
@@ -103,6 +104,28 @@ export async function POST(req: NextRequest) {
                 docs.delete(`brand:${input.id}`);
             });
             return NextResponse.json({ ok: true });
+        }
+        if (input.action === "duplicate-brand") {
+            const saved = await store.transaction(docs => {
+                const original = docs.get(`brand:${input.id}`) as BrandSystem | undefined;
+                if (!original) throw new WorkflowError("No se encontró el sistema de diseño.", 404);
+                if ([...docs.keys()].filter(key => key.startsWith("brand:")).length >= 50) throw new WorkflowError("Alcanzaste el límite de sistemas de diseño.", 409);
+                const suffix = " (copia)";
+                const name = original.name.length + suffix.length <= 80 ? `${original.name}${suffix}` : `${original.name.slice(0, 80 - suffix.length)}${suffix}`;
+                const now = Date.now();
+                const duplicate: BrandSystem = {
+                    ...original,
+                    id: crypto.randomUUID(),
+                    name,
+                    references: original.references?.map(reference => ({ ...reference })),
+                    logoAssetIds: original.logoAssetIds ? [...original.logoAssetIds] : undefined,
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                docs.set(`brand:${duplicate.id}`, duplicate);
+                return duplicate;
+            });
+            return NextResponse.json({ brand: saved }, { status: 201 });
         }
         if (input.project.format === "carousel" && input.project.slideCount < 2) throw new WorkflowError("Un carrusel necesita al menos dos diapositivas.");
         if (input.project.taskIds.length > input.project.slideCount) throw new WorkflowError("El proyecto contiene más tareas que diapositivas.");

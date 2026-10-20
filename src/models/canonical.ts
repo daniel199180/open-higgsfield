@@ -26,10 +26,16 @@ export interface CanonicalParams {
 export interface CanonicalMediaInputs {
     /** Image attachments keyed by role/slot id → uploaded URL */
     images?: Record<string, string>;
+    /** Additional image references for multimodal video models */
+    reference_images?: string[];
     /** Video attachment URL */
     video?: string;
     /** Audio attachment URL */
     audio?: string;
+    /** Additional video references for multimodal video models */
+    reference_videos?: string[];
+    /** Additional audio references for multimodal video models */
+    reference_audios?: string[];
     /** Elements (character/style reference images) */
     elements?: Array<{
         frontal_image_url?: string;

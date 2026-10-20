@@ -91,40 +91,52 @@ async function generate(req: NextRequest) {
 
   // ── Process media uploads ────────────────────────────────────────────────
   const images: Record<string, string> = {};
+  const referenceImageUrls: string[] = [];
   let videoUrl: string | undefined;
   let audioUrl: string | undefined;
+  const referenceVideoUrls: string[] = [];
+  const referenceAudioUrls: string[] = [];
 
   for (const slot of caps.media_slots) {
-    const file = form.get(`file_${slot.id}`) as File | null;
-    let url = String(form.get(`url_${slot.id}`) ?? "").trim();
+    const files = form.getAll(`file_${slot.id}`).filter((entry): entry is File => typeof entry !== "string" && entry.size > 0);
+    const urls = form.getAll(`url_${slot.id}`).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+    const entries: Array<{ file?: File; url?: string }> = [...files.map((file) => ({ file })), ...urls.map((url) => ({ url: url.trim() }))];
+    const selectedEntries = slot.multiple ? entries : entries.slice(0, 1);
+    const resolvedUrls: string[] = [];
 
-    if (file && file.size > 0) {
+    for (const entry of selectedEntries) {
+      let url = "";
       try {
-        const buf = Buffer.from(await file.arrayBuffer());
-        if (slot.kind === "image") {
-          const result = await processImageUpload(buf);
-          url = result.remoteUrl;
-        } else {
-          const mimeType = file.type || (slot.kind === "video" ? "video/mp4" : "application/octet-stream");
-          const result = await processFileUpload(buf, file.name, mimeType);
-          url = result.remoteUrl;
+        if (entry.file) {
+          const buf = Buffer.from(await entry.file.arrayBuffer());
+          if (slot.kind === "image") {
+            const result = await processImageUpload(buf);
+            url = result.remoteUrl;
+          } else {
+            const mimeType = entry.file.type || (slot.kind === "video" ? "video/mp4" : "application/octet-stream");
+            const result = await processFileUpload(buf, entry.file.name, mimeType);
+            url = result.remoteUrl;
+          }
+        } else if (entry.url) {
+          url = (await resolveUrl(entry.url)).remoteUrl;
         }
       } catch {
-        return NextResponse.json({ error: "No se pudo procesar el archivo de referencia." }, { status: 400 });
+        return NextResponse.json({ error: entry.file ? "No se pudo procesar el archivo de referencia." : "La URL de referencia no es válida o no está disponible." }, { status: 400 });
       }
-    } else if (url) {
-      try {
-        const resolved = await resolveUrl(url);
-        url = resolved.remoteUrl;
-      } catch {
-        return NextResponse.json({ error: "La URL de referencia no es válida o no está disponible." }, { status: 400 });
-      }
+      if (url) resolvedUrls.push(url);
     }
 
-    if (url) {
-      if (slot.kind === "video") videoUrl = url;
-      else if (slot.kind === "audio") audioUrl = url;
-      else images[slot.id] = url;
+    if (resolvedUrls.length > 0) {
+      if (slot.kind === "video") {
+        if (slot.type === "reference" || slot.multiple) referenceVideoUrls.push(...resolvedUrls);
+        else videoUrl = resolvedUrls[0];
+      } else if (slot.kind === "audio") {
+        if (slot.type === "reference" || slot.multiple) referenceAudioUrls.push(...resolvedUrls);
+        else audioUrl = resolvedUrls[0];
+      } else {
+        if (slot.type === "reference" || slot.multiple) referenceImageUrls.push(...resolvedUrls);
+        else images[slot.id] = resolvedUrls[0];
+      }
     } else if (slot.required) {
       return NextResponse.json({ error: `Missing required attachment: ${slot.label}` }, { status: 400 });
     }
@@ -179,8 +191,11 @@ async function generate(req: NextRequest) {
 
   const media: CanonicalMediaInputs = {
     images: Object.keys(images).length > 0 ? images : undefined,
+    reference_images: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
     video: videoUrl,
     audio: audioUrl,
+    reference_videos: referenceVideoUrls.length > 0 ? referenceVideoUrls : undefined,
+    reference_audios: referenceAudioUrls.length > 0 ? referenceAudioUrls : undefined,
     elements: elementsPayload.length > 0 ? elementsPayload : undefined,
   };
 

@@ -77,6 +77,7 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
     const payload = await response.json().catch(() => ({})) as { data?: Array<Record<string, unknown>> };
     return (payload.data ?? []).map((model, index) => {
         const id = String(model.id ?? model.canonical_slug ?? `model-${index}`);
+        const label = String(model.name ?? id);
         const supported = (model.supported_parameters ?? {}) as Record<string, unknown>;
         const architecture = (model.architecture ?? {}) as { input_modalities?: unknown[] };
         if (mediaType === "image") {
@@ -89,7 +90,7 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
             if (supported.quality) customFields.push({ id: "quality", label: "Quality", type: "select", options: fieldOptions(supported.quality) });
             return baseCapability({
                 id: runtimeId("openrouter", "image", connection.id, id),
-                label: String(model.name ?? id),
+                label,
                 family: "OpenRouter",
                 variant: id,
                 group: "OpenRouter",
@@ -117,9 +118,30 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
         const resolutions = Array.isArray(model.supported_resolutions)
             ? model.supported_resolutions.filter((value): value is string => typeof value === "string")
             : [];
+        const modelText = `${id} ${label}`.toLowerCase();
+        const inputModalities = [
+            ...(Array.isArray(architecture.input_modalities) ? architecture.input_modalities : []),
+            ...(Array.isArray(model.input_modalities) ? model.input_modalities : []),
+        ].map((value) => String(value).toLowerCase());
+        // OpenRouter currently documents Seedance 2.x as the multimodal
+        // reference family. Keep metadata checks for future catalog entries.
+        const seedanceReferences = /seedance[-_.]?2(?:[.-]|$)/i.test(modelText);
+        const acceptsReferenceImages = seedanceReferences || supported.input_references === true || supported.reference_images === true;
+        const acceptsReferenceVideo = seedanceReferences || inputModalities.includes("video") || supported.reference_videos === true;
+        const acceptsReferenceAudio = seedanceReferences || inputModalities.includes("audio") || supported.reference_audio === true;
+        const referenceSlots = [
+            ...(acceptsReferenceImages ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image" as const, multiple: true, type: "reference" }] : []),
+            ...(acceptsReferenceVideo ? [{ id: "reference_video", label: "Videos de referencia", kind: "video" as const, multiple: true, type: "reference" }] : []),
+            ...(acceptsReferenceAudio ? [{ id: "reference_audio", label: "Audio de referencia", kind: "audio" as const, multiple: true, type: "reference" }] : []),
+        ];
+        const frameSlots = (model.supported_frame_images as unknown[] | undefined)?.map((role) => ({
+            id: role === "last_frame" ? "end_image" : "start_image",
+            label: role === "last_frame" ? "Last frame" : "First frame",
+            kind: "image" as const,
+        })) ?? [];
         return baseCapability({
             id: runtimeId("openrouter", "video", connection.id, id),
-            label: String(model.name ?? id),
+            label,
             family: "OpenRouter",
             variant: id,
             group: "OpenRouter",
@@ -131,11 +153,7 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
             duration: durations.length ? { options: durations, default: durations[0] } : false,
             aspect_ratio: ratios.length ? { options: ratios.map((ratio) => [ratio, ratio] as [string, string]), default: [ratios[0], ratios[0]] } : false,
             resolution_variant: resolutions.length ? { options: resolutions, default: resolutions[0] } : false,
-            media_slots: (model.supported_frame_images as unknown[] | undefined)?.map((role) => ({
-                id: role === "last_frame" ? "end_image" : "start_image",
-                label: role === "last_frame" ? "Last frame" : "First frame",
-                kind: "image" as const,
-            })) ?? [],
+            media_slots: [...frameSlots, ...referenceSlots],
             custom_fields: model.generate_audio ? [{ id: "generate_audio", label: "Generate audio", type: "checkbox", default: true }] : [],
             sort_key: 7000 - index,
         });
@@ -226,8 +244,15 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     const ratios = fieldOptions(supported.aspect_ratio ?? model.aspect_ratios);
     const resolutions = fieldOptions(supported.resolution ?? model.resolutions);
     const qualities = fieldOptions(supported.quality);
-    const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities);
-    const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true || isCarouselProviderModel("apimart", id, label);
+    const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities).map((value) => value.toLowerCase());
+    const modelText = `${id} ${label}`.toLowerCase();
+    // APIMart's model list is inconsistent across versions. Keep explicit
+    // metadata checks plus the documented multimodal families so the UI does
+    // not hide reference inputs when a catalog response omits those flags.
+    const multimodalReferences = /seedance[-_.]?2(?:[.-]|$)|wan[-_.]?3(?:[.-]|$)|minimax[-_.]?h3|vidu[-_.]?q4/i.test(modelText);
+    const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true || multimodalReferences || isCarouselProviderModel("apimart", id, label);
+    const acceptsReferenceVideo = inputModes.includes("video") || supported.video_urls === true || multimodalReferences;
+    const acceptsReferenceAudio = inputModes.includes("audio") || supported.audio_urls === true || supported.reference_audio === true || multimodalReferences;
     const displayRatios = ratios.length ? ratios : image ? ["1:1"] : ["16:9", "9:16", "1:1"];
     return baseCapability({
         id: runtimeId("apimart", mediaType, connection.id, id),
@@ -248,8 +273,14 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
         aspect_ratio: { options: displayRatios.map((ratio) => [ratio, ratio] as [string, string]), default: [displayRatios[0], displayRatios[0]] },
         resolution_variant: image ? (resolutions.length ? { options: resolutions, default: resolutions[0] } : false) : { options: resolutions.length ? resolutions : ["480p", "720p", "1080p"], default: (resolutions.length ? resolutions : ["480p", "720p", "1080p"])[0] },
         media_slots: image
-            ? (acceptsReferences ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true }] : [])
-            : [{ id: "start_image", label: "Primer fotograma", kind: "image" }, { id: "end_image", label: "Último fotograma", kind: "image" }],
+            ? (acceptsReferences ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true, type: "reference" }] : [])
+            : [
+                { id: "start_image", label: "Primer fotograma", kind: "image" },
+                { id: "end_image", label: "Último fotograma", kind: "image" },
+                ...(acceptsReferences ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image" as const, multiple: true, type: "reference" }] : []),
+                ...(acceptsReferenceVideo ? [{ id: "reference_video", label: "Videos de referencia", kind: "video" as const, multiple: true, type: "reference" }] : []),
+                ...(acceptsReferenceAudio ? [{ id: "reference_audio", label: "Audio de referencia", kind: "audio" as const, multiple: true, type: "reference" }] : []),
+            ],
         custom_fields: image
             ? (qualities.length ? [{ id: "quality", label: "Calidad", type: "select", options: qualities, default: qualities[0] }] : [])
             : [{ id: "generate_audio", label: "Generar audio", type: "checkbox", default: false }],

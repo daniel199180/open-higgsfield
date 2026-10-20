@@ -48,6 +48,38 @@ test("APIMart uses its fixed official API, Bearer credentials, and asynchronous 
         if (result.status === "COMPLETED") assert.equal(result.assets[0]?.url, "https://media.example/output.mp4");
         assert.equal(mock.mock.callCount(), 2);
     });
+    await t.test("sends multimodal reference arrays for Seedance", async (t) => {
+        const mock = t.mock.method(globalThis, "fetch", async (url: URL, options?: RequestInit) => {
+            if (url.pathname === "/v1/videos/generations") {
+                assert.deepEqual(JSON.parse(options?.body as string), {
+                    model: "doubao-seedance-2.5",
+                    prompt: "A ceramic mug",
+                    duration: 5,
+                    resolution: "2k",
+                    size: "1:1",
+                    generate_audio: false,
+                    image_urls: ["https://cdn.example/style.png", "https://cdn.example/character.png"],
+                    video_urls: ["https://cdn.example/motion.mp4"],
+                    audio_urls: ["https://cdn.example/voice.wav"],
+                });
+                return Response.json({ code: 200, data: [{ status: "submitted", task_id: "task-multimodal" }] });
+            }
+            throw new Error("unexpected request");
+        });
+        const result = await provider.submit({
+            ...image,
+            mediaType: "video",
+            providerModelId: "doubao-seedance-2.5",
+            params: { ...image.params, duration: "5", field_values: { generate_audio: false } },
+            media: {
+                reference_images: ["https://cdn.example/style.png", "https://cdn.example/character.png"],
+                reference_videos: ["https://cdn.example/motion.mp4"],
+                reference_audios: ["https://cdn.example/voice.wav"],
+            },
+        });
+        assert.equal(result.status, "CREATED");
+        assert.equal(mock.mock.callCount(), 1);
+    });
 
     await t.test("never exposes APIMart request details on rejection", async (t) => {
         t.mock.method(globalThis, "fetch", async () => Response.json({ error: { message: "apimart-test-key private request" } }, { status: 401 }));

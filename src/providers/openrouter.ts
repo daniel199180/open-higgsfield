@@ -1,6 +1,6 @@
 import type { GenerationProvider, ProviderGenerationRequest, ProviderPollRequest, ProviderPollResult, ProviderSubmission } from "./types";
 import { getConnectionForProvider } from "@/lib/connection-store";
-import { getImageUrl, getMediaUrls } from "./utils";
+import { getImageUrl, getMediaUrls, getReferenceAudioUrls, getReferenceVideoUrls } from "./utils";
 import { providerFetch } from "./secure-fetch";
 import { openRouterFailure } from "./openrouter-errors";
 import { openRouterUsage, UsageReportedError } from "@/billing/usage";
@@ -94,8 +94,13 @@ function videoPayload(request: ProviderGenerationRequest): Record<string, unknow
         ];
     }
     const references = getMediaUrls(request.media).filter((url) => url !== first && url !== last);
-    if (references.length > 0) {
-        payload.input_references = references.map((url) => ({ type: "image_url", image_url: { url } }));
+    const inputReferences = [
+        ...references.map((url) => ({ type: "image_url", image_url: { url } })),
+        ...getReferenceVideoUrls(request.media).map((url) => ({ type: "video_url", video_url: { url } })),
+        ...getReferenceAudioUrls(request.media).map((url) => ({ type: "audio_url", audio_url: { url } })),
+    ];
+    if (inputReferences.length > 0) {
+        payload.input_references = inputReferences;
     }
     return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined && value !== ""));
 }

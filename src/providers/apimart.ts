@@ -1,6 +1,6 @@
 import type { GeneratedAsset, GenerationProvider, ProviderGenerationRequest, ProviderPollRequest, ProviderPollResult, ProviderSubmission } from "./types";
 import { getConnectionForProvider } from "@/lib/connection-store";
-import { getImageUrl, getMediaUrls } from "./utils";
+import { getImageUrl, getMediaUrls, getReferenceAudioUrls, getReferenceVideoUrls } from "./utils";
 import { providerFetch } from "./secure-fetch";
 
 type ApiMartConnection = Awaited<ReturnType<typeof getConnectionForProvider>>;
@@ -90,6 +90,11 @@ function videoPayload(request: ProviderGenerationRequest): Record<string, unknow
     const last = getImageUrl(request.media, "end_image");
     const seedance = /seedance/i.test(request.providerModelId);
     const kling = /kling/i.test(request.providerModelId);
+    const frameImages = [first, last].filter((item): item is string => !!item);
+    const imageReferences = getMediaUrls(request.media);
+    const usesFrameImages = frameImages.length > 0;
+    const referenceVideos = getReferenceVideoUrls(request.media);
+    const referenceAudios = getReferenceAudioUrls(request.media);
     return Object.fromEntries(Object.entries({
         model: request.providerModelId,
         prompt: request.params.prompt,
@@ -97,7 +102,12 @@ function videoPayload(request: ProviderGenerationRequest): Record<string, unknow
         resolution: request.params.resolution || undefined,
         ...(seedance ? { size: request.params.aspect_ratio || undefined } : { aspect_ratio: request.params.aspect_ratio || undefined }),
         ...(seedance ? { generate_audio: typeof values.generate_audio === "boolean" ? values.generate_audio : undefined } : kling ? { audio: typeof values.generate_audio === "boolean" ? values.generate_audio : undefined } : {}),
-        image_urls: first || last ? [first, last].filter((item): item is string => !!item) : undefined,
+        // APIMart rejects audio/video references when the first/last-frame
+        // lane is selected, so use either the frame lane or the multimodal
+        // reference lane for a request.
+        image_urls: (usesFrameImages ? frameImages : imageReferences).length ? (usesFrameImages ? frameImages : imageReferences) : undefined,
+        video_urls: usesFrameImages || referenceVideos.length === 0 ? undefined : referenceVideos,
+        audio_urls: usesFrameImages || referenceAudios.length === 0 ? undefined : referenceAudios,
     }).filter(([, value]) => value !== undefined && value !== ""));
 }
 

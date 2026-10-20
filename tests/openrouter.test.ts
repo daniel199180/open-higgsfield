@@ -91,6 +91,31 @@ test("OpenRouter adapter: request contract, responses, safe failures and no retr
         assert.equal(result.status, "COMPLETED");
         assert.equal(mock.mock.callCount(), 1);
     });
+    await t.test("sends multiple image, video and audio references for Seedance", async (t) => {
+        const mock = t.mock.method(globalThis, "fetch", async (_url: URL, options: RequestInit) => {
+            const payload = JSON.parse(options.body as string);
+            assert.deepEqual(payload.input_references, [
+                { type: "image_url", image_url: { url: "https://cdn.example/style.png" } },
+                { type: "image_url", image_url: { url: "https://cdn.example/character.png" } },
+                { type: "video_url", video_url: { url: "https://cdn.example/motion.mp4" } },
+                { type: "audio_url", audio_url: { url: "https://cdn.example/voice.wav" } },
+            ]);
+            return Response.json({ id: "video-job", status: "pending", polling_url: "/api/v1/videos/video-job" }, { status: 202 });
+        });
+        const result = await provider.submit({
+            ...request,
+            mediaType: "video",
+            providerModelId: "bytedance/seedance-2.5",
+            params: { ...request.params, duration: "5", field_values: {} },
+            media: {
+                reference_images: ["https://cdn.example/style.png", "https://cdn.example/character.png"],
+                reference_videos: ["https://cdn.example/motion.mp4"],
+                reference_audios: ["https://cdn.example/voice.wav"],
+            },
+        });
+        assert.equal(result.status, "CREATED");
+        assert.equal(mock.mock.callCount(), 1);
+    });
     await t.test("requests PNG transparency and rejects a visually opaque result", async (t) => {
         const transparent = await sharp({ create: { width: 2, height: 2, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
         const opaque = await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer();

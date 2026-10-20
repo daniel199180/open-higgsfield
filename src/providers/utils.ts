@@ -2,8 +2,18 @@ import type { CanonicalMediaInputs } from "@/models/canonical";
 import { assertSafeRemoteUrl } from "@/lib/safe-url";
 
 export function getMediaUrls(media: CanonicalMediaInputs): string[] {
-    const values = Object.values(media.images ?? {}) as unknown[];
+    const values = [...Object.values(media.images ?? {}), ...(media.reference_images ?? [])] as unknown[];
     return values.flatMap((value) => Array.isArray(value) ? value : [value])
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+export function getReferenceVideoUrls(media: CanonicalMediaInputs): string[] {
+    return [...(media.reference_videos ?? []), ...(media.video ? [media.video] : [])]
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+export function getReferenceAudioUrls(media: CanonicalMediaInputs): string[] {
+    return [...(media.reference_audios ?? []), ...(media.audio ? [media.audio] : [])]
         .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 

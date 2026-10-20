@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Paperclip, Upload, X, Image as ImageIcon, Video, Link2 } from "lucide-react";
+import { Paperclip, Upload, X, Image as ImageIcon, Video, Music2, Link2 } from "lucide-react";
 import { PillPopover } from "./PillPopover";
 import { Input } from "@/components/ui/input";
 import type { ModelCapabilities } from "@/models/capabilities/types";
@@ -41,21 +41,24 @@ export function AttachmentButton({ model, attachments, onAttachmentsChange }: At
             label: r.label,
             kind: "image" as const,
             required: false,
+            multiple: r.multiple,
         })) ?? []),
         ...(overrides.attachment_roles?.map((r) => ({
             id: r.id,
             label: r.label,
             kind: r.kind,
             required: r.required ?? false,
+            multiple: false,
         })) ?? []),
         ...(imageField
-            ? [{ id: imageField, label: t("imageLabel"), kind: "image" as const, required: isImageRequired(model) }]
+            ? [{ id: imageField, label: t("imageLabel"), kind: "image" as const, required: isImageRequired(model), multiple: false }]
             : []),
         ...nonImageSlots.map((s) => ({
             id: s.id,
             label: s.label,
             kind: s.kind,
             required: s.required ?? false,
+            multiple: s.multiple,
         })),
     ];
 
@@ -116,6 +119,7 @@ export function AttachmentButton({ model, attachments, onAttachmentsChange }: At
                         label={role.label}
                         kind={role.kind}
                         required={role.required}
+                        multiple={role.multiple}
                         items={attachments.filter((a) => a.roleId === role.id)}
                         savedIds={savedIds}
                         onAddFile={(f) => addFile(role.id, f, role.kind)}
@@ -148,6 +152,7 @@ interface RoleUploadProps {
     label: string;
     kind: "image" | "video" | "audio";
     required: boolean;
+    multiple?: boolean;
     items: AttachmentItem[];
     savedIds: string[];
     onAddFile: (file: File) => void;
@@ -158,14 +163,14 @@ interface RoleUploadProps {
     t: ReturnType<typeof useTranslations<"commandBar">>;
 }
 
-function RoleUpload({ label, kind, required, items, savedIds, onAddFile, onAddUrl, onPickGallery, onSaveFile, onRemove, t }: RoleUploadProps) {
+function RoleUpload({ label, kind, required, multiple, items, savedIds, onAddFile, onAddUrl, onPickGallery, onSaveFile, onRemove, t }: RoleUploadProps) {
     const fileRef = useRef<HTMLInputElement>(null);
     const [urlInput, setUrlInput] = useState("");
     const [showUrl, setShowUrl] = useState(false);
 
     const accept =
         kind === "image" ? "image/*" : kind === "video" ? "video/*" : "audio/*";
-    const KindIcon = kind === "video" ? Video : ImageIcon;
+    const KindIcon = kind === "video" ? Video : kind === "audio" ? Music2 : ImageIcon;
 
     return (
         <div className="rounded-[12px] border p-2.5 space-y-1.5" style={{ borderColor: "rgba(255,255,255,.08)", background: "rgba(255,255,255,.03)" }}>
@@ -230,10 +235,10 @@ function RoleUpload({ label, kind, required, items, savedIds, onAddFile, onAddUr
                     ref={fileRef}
                     type="file"
                     accept={accept}
+                    multiple={multiple}
                     className="sr-only"
                     onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) onAddFile(f);
+                        for (const file of Array.from(e.target.files ?? [])) onAddFile(file);
                         e.target.value = "";
                     }}
                 />

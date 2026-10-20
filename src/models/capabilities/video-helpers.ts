@@ -11,6 +11,7 @@ export interface ImageRole {
     label: string;
     kind: "image";
     type?: string;
+    multiple?: boolean;
 }
 
 export interface AttachmentRole {
@@ -135,6 +136,7 @@ export function getImageRoles(caps: ModelCapabilities): ImageRole[] | undefined 
         label: s.label,
         kind: "image" as const,
         type: s.type,
+        multiple: s.multiple,
     }));
 }
 
@@ -172,5 +174,5 @@ export function isAudioRequired(caps: ModelCapabilities): boolean {
 export function hasAttachments(caps: ModelCapabilities): boolean {
     const ov = OVERRIDES[caps.id];
     if (ov?.attachment_roles?.length) return true;
-    return caps.media_slots.some(s => s.kind === "image" || s.kind === "video");
+    return caps.media_slots.some(s => s.kind === "image" || s.kind === "video" || s.kind === "audio");
 }

@@ -36,8 +36,11 @@ async function requestJson(url: string, connection: NonNullable<ApiMartConnectio
         throw new Error(timeout ? "ERR_APIMART_TIMEOUT" : "ERR_APIMART_NETWORK");
     }
     const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) {
-        throw new Error(requestFailure(response.status, payload));
+    const apiCode = payload && typeof payload === "object" && !Array.isArray(payload) && typeof (payload as Record<string, unknown>).code === "number"
+        ? (payload as Record<string, unknown>).code as number
+        : undefined;
+    if (!response.ok || (apiCode !== undefined && apiCode >= 400) || !payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) {
+        throw new Error(requestFailure(apiCode ?? response.status, payload));
     }
     return payload as Record<string, unknown>;
 }

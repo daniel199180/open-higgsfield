@@ -5,6 +5,7 @@ import { expandApiMarketConnections, getConnectionForProvider, getStoredConnecti
 import { listApiMarketTools } from "@/providers/api-market-client";
 import { providerFetch } from "./secure-fetch";
 import { isCarouselProviderModel } from "@/social/carousel-models";
+import type { ProviderId } from "./types";
 
 type MediaType = "image" | "video";
 
@@ -310,22 +311,21 @@ async function providerConnections(provider: "openrouter" | "higgsfield" | "api-
     return provider === "api-market" ? expandApiMarketConnections(active) : active;
 }
 
-export async function getDynamicCatalog(mediaType: MediaType): Promise<ModelCapabilities[]> {
+export async function getDynamicCatalog(mediaType: MediaType, providerFilter?: ProviderId): Promise<ModelCapabilities[]> {
     const result: ModelCapabilities[] = [];
-    for (const connection of await providerConnections("openrouter")) {
-        result.push(...await openRouterModels(connection, mediaType).catch(() => []));
-    }
-    for (const connection of await providerConnections("higgsfield")) {
-        result.push(...higgsfieldCatalog(connection, mediaType));
-    }
-    const marketConnections = await providerConnections("api-market");
-    for (let start = 0; start < marketConnections.length; start += 6) {
-        const batch = await Promise.all(marketConnections.slice(start, start + 6).map((connection) => apiMarketCatalog(connection, mediaType).catch(() => [])));
-        result.push(...batch.flat());
-    }
-    for (const connection of await providerConnections("apimart")) {
-        result.push(...await apimartCatalog(connection, mediaType).catch(() => []));
-    }
+    const [openrouterConnections, higgsfieldConnections, marketConnections, apimartConnections] = await Promise.all([
+        providerFilter && providerFilter !== "openrouter" ? Promise.resolve([]) : providerConnections("openrouter"),
+        providerFilter && providerFilter !== "higgsfield" ? Promise.resolve([]) : providerConnections("higgsfield"),
+        providerFilter && providerFilter !== "api-market" ? Promise.resolve([]) : providerConnections("api-market"),
+        providerFilter && providerFilter !== "apimart" ? Promise.resolve([]) : providerConnections("apimart"),
+    ]);
+    const [openrouter, higgsfield, apiMarket, apimart] = await Promise.all([
+        Promise.all(openrouterConnections.map((connection) => openRouterModels(connection, mediaType).catch(() => [] as ModelCapabilities[]))),
+        Promise.resolve(higgsfieldConnections.map((connection) => higgsfieldCatalog(connection, mediaType))),
+        Promise.all(marketConnections.map((connection) => apiMarketCatalog(connection, mediaType).catch(() => [] as ModelCapabilities[]))),
+        Promise.all(apimartConnections.map((connection) => apimartCatalog(connection, mediaType).catch(() => [] as ModelCapabilities[]))),
+    ]);
+    result.push(...openrouter.flat(), ...higgsfield.flat(), ...apiMarket.flat(), ...apimart.flat());
     return result;
 }
 
@@ -336,7 +336,11 @@ export async function getCatalog(mediaType: MediaType): Promise<ModelCapabilitie
 }
 
 export async function findCapability(mediaType: MediaType, modelId: string): Promise<ModelCapabilities | undefined> {
-    return (await getCatalog(mediaType)).find((model) => model.id === modelId);
+    const staticModel = staticCapability(mediaType, modelId);
+    if (staticModel) return staticModel;
+    const provider = /^(openrouter|higgsfield|api-market|apimart):/.exec(modelId)?.[1] as ProviderId | undefined;
+    if (!provider) return undefined;
+    return (await getDynamicCatalog(mediaType, provider)).find((model) => model.id === modelId);
 }
 
 export function isRuntimeModel(modelId: string): boolean {

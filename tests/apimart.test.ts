@@ -90,4 +90,8 @@ test("APIMart uses its fixed official API, Bearer credentials, and asynchronous 
         t.mock.method(globalThis, "fetch", async () => Response.json({ error: { message: "prompt is too long: private content" } }, { status: 422 }));
         await assert.rejects(provider.submit(image), /ERR_APIMART_PROMPT_TOO_LONG/);
     });
+    await t.test("classifies APIMart's HTTP 200 body-level rejection", async (t) => {
+        t.mock.method(globalThis, "fetch", async () => Response.json({ code: 400, message: "invalid reference media" }));
+        await assert.rejects(provider.submit(image), /ERR_APIMART_REFERENCE_UNSUPPORTED/);
+    });
 });

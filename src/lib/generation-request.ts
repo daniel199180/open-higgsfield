@@ -4,6 +4,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { atomicJson, readJson, SECURITY_DIR, withSecurityLock } from "./security-store";
 import { authorizeRequest, limitRequest, readLimitedBody, securityError } from "./api-security";
+import { publicErrorMessage } from "./public-error";
 
 interface Entry { fingerprint: string; at: number; status?: number; body?: unknown }
 const file = path.join(SECURITY_DIR, "generation-requests.json");
@@ -34,7 +35,7 @@ export async function generationEndpoint(req: NextRequest, handler: (req: NextRe
         } catch (error) {
             response = error instanceof Error && error.message === "ERR_PUBLIC_REFERENCE_ORIGIN_REQUIRED"
                 ? securityError(error)
-                : NextResponse.json({ error: "No se pudo completar la generación. Revisa el historial antes de reintentar." }, { status: 500 });
+                : NextResponse.json({ error: publicErrorMessage(error) }, { status: 500 });
         }
         const body = await response.clone().json();
         await withSecurityLock("generation", async () => {

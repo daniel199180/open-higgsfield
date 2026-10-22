@@ -217,6 +217,19 @@ function envConnection(provider: ProviderId): ProviderConnection | undefined {
             updatedAt: now,
         };
     }
+    if (provider === "deepseek" && process.env.DEEPSEEK_API_KEY) {
+        return {
+            id: "env:deepseek",
+            provider,
+            name: "DeepSeek (.env.local)",
+            enabled: true,
+            isDefault: false,
+            config: { baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com" },
+            credentials: { apiKey: process.env.DEEPSEEK_API_KEY },
+            createdAt: now,
+            updatedAt: now,
+        };
+    }
     return undefined;
 }
 

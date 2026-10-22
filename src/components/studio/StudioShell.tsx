@@ -17,6 +17,7 @@ import { mergeRuntimeCatalog } from "@/lib/runtime-catalog";
 import { AdminAccess } from "./AdminAccess";
 import { StudioNavigation } from "./StudioNavigation";
 import { UsagePanel } from "./UsagePanel";
+import { TextChatStudio } from "./TextChatStudio";
 
 const WorkflowStudio = dynamic(() => import("@/components/workflows/WorkflowStudio").then(module => module.WorkflowStudio), { ssr: false });
 const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").then(module => module.SocialStudio), { ssr: false });
@@ -24,13 +25,13 @@ const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").th
 export function StudioShell() {
   const [mode, setMode] = useState<StudioMode>("image");
   const [usageOpen, setUsageOpen] = useState(false);
-  const [workspace, setWorkspace] = useState<"studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis">("studio");
+  const [workspace, setWorkspace] = useState<"studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis">("studio");
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const beforeLeaveWorkflow = useRef<(() => Promise<boolean>) | null>(null);
   const beforeLeaveEditor = useRef<(() => Promise<boolean>) | null>(null);
   const registerEditorGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveEditor.current = guard; }, []);
   const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
-  const navigateWorkspace = useCallback((next: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
+  const navigateWorkspace = useCallback((next: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
     window.scrollTo(0, 0);
     setWorkspace(next);
     const url = new URL(window.location.href);
@@ -39,7 +40,7 @@ export function StudioShell() {
     if (next !== "workflows") { url.searchParams.delete("workflow"); url.searchParams.delete("run"); }
     window.history.replaceState(null, "", url);
   }, []);
-  const selectNavigation = useCallback(async (destination: "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "usage" | "apis") => {
+  const selectNavigation = useCallback(async (destination: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "usage" | "apis") => {
     if (destination === "usage") { setUsageOpen(true); return; }
     if (destination === workspace) return;
     if (workspace === "workflows" && beforeLeaveWorkflow.current && !await beforeLeaveWorkflow.current()) return;
@@ -74,7 +75,7 @@ export function StudioShell() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const requestedWorkspace = new URLSearchParams(window.location.search).get("workspace");
-      if (requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "prompts" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
+      if (requestedWorkspace === "chat" || requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "prompts" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
       const requestedMode = new URLSearchParams(window.location.search).get("mode");
       if (requestedMode === "carousel" || requestedMode === "logo" || requestedMode === "audio") setMode(requestedMode);
       void checkSession();
@@ -138,11 +139,11 @@ export function StudioShell() {
 
   if (!authenticated) return <main className="grid min-h-screen place-items-center bg-black p-4 text-white">{authenticated === null ? <p>Comprobando acceso…</p> : <AdminAccess onReady={() => setAuthenticated(true)} />}</main>;
 
-  const viewportWorkspace = workspace === "studio" || workspace === "workflows" || workspace === "social" || workspace === "editor" || workspace === "apis";
+  const viewportWorkspace = workspace === "studio" || workspace === "chat" || workspace === "workflows" || workspace === "social" || workspace === "editor" || workspace === "apis";
 
   return (
     <div className={viewportWorkspace ? "relative h-dvh overflow-hidden bg-black" : "relative min-h-dvh bg-black"}>
-      {workspace === "workflows" ? <WorkflowStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerWorkflowGuard} /> :
+      {workspace === "chat" ? <TextChatStudio /> : workspace === "workflows" ? <WorkflowStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerWorkflowGuard} /> :
         workspace === "social" ? <SocialStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "characters" ? <CharacterStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "companies" ? <CompanyLibrary onBack={() => navigateWorkspace("studio")} /> :

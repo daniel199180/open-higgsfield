@@ -7,6 +7,7 @@ export const PROVIDER_BASES = {
     higgsfield: "https://api.higgsfield.ai",
     "api-market": "https://prod.api.market/api/mcp",
     apimart: "https://api.apimart.ai/v1",
+    deepseek: "https://api.deepseek.com",
 } as const;
 export type ConfigurableProvider = keyof typeof PROVIDER_BASES;
 

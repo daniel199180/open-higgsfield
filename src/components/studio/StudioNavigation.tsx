@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleDollarSign, Folder, House, Images, Menu, Palette, Settings2, UserRound, WandSparkles, Workflow, X } from "lucide-react";
+import { Bot, CircleDollarSign, Folder, House, Images, Menu, Palette, Settings2, UserRound, WandSparkles, Workflow, X } from "lucide-react";
 
-type Workspace = "studio" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis";
+type Workspace = "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis";
 type Destination = Workspace | "usage";
 
 export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace; onSelect: (destination: Destination) => void }) {
@@ -41,6 +41,7 @@ export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace
   };
   const items = [
     { id: "studio" as const, label: "Inicio", description: "Imagen, video, carruseles y logos", icon: House },
+    { id: "chat" as const, label: "Chat IA", description: "Modelos de texto, sesiones e historial", icon: Bot },
     { id: "editor" as const, label: "Editar imágenes", description: "Galería, retoques e historial", icon: Images },
     { id: "companies" as const, label: "Empresas", description: "Carpetas y biblioteca de generaciones", icon: Folder },
     { id: "usage" as const, label: "Consumo", description: "Tokens, solicitudes y dólares", icon: CircleDollarSign },

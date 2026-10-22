@@ -57,6 +57,8 @@ next-env.d.ts
 /uploads/
 /tasks_history.json
 /tasks_history.json.tmp
+/chat_history.json
+/chat_history.json.tmp
 .higgsfield-security/
 provider-connections.enc.json
 /data/

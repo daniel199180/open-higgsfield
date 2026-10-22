@@ -49,9 +49,53 @@ async function ensureSchema(): Promise<void> {
                 END
                 $$
             `;
+            await sql`
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    model_id TEXT,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    archived_at TIMESTAMPTZ,
+                    web_search BOOLEAN NOT NULL DEFAULT FALSE,
+                    reasoning BOOLEAN NOT NULL DEFAULT FALSE,
+                    skill_id TEXT
+                )
+            `;
+            await sql`
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    model_id TEXT,
+                    sources_json TEXT,
+                    attachment_names_json TEXT,
+                    created_at TIMESTAMPTZ NOT NULL
+                )
+            `;
+            await sql`ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS web_search BOOLEAN NOT NULL DEFAULT FALSE`;
+            await sql`ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reasoning BOOLEAN NOT NULL DEFAULT FALSE`;
+            await sql`ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS skill_id TEXT`;
+            await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS sources_json TEXT`;
+            await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachment_names_json TEXT`;
+            await sql`
+                CREATE INDEX IF NOT EXISTS chat_sessions_updated_at_idx
+                ON chat_sessions (updated_at DESC)
+            `;
+            await sql`
+                CREATE INDEX IF NOT EXISTS chat_messages_session_created_at_idx
+                ON chat_messages (session_id, created_at ASC)
+            `;
         })();
     }
     await schemaPromise;
+}
+
+export async function databaseClient(): Promise<SqlClient | null> {
+    if (!isDatabaseConfigured()) return null;
+    await ensureSchema();
+    return getSql();
 }
 
 export async function loadPersistedTasks(): Promise<AnyTask[]> {

@@ -3,7 +3,7 @@ import { providerBase } from "@/providers/secure-fetch";
 import { parseApiMarketProducts } from "@/lib/api-market-products";
 export const connectionSchema = z.object({
     id: z.string().uuid().optional(),
-    provider: z.enum(["openrouter", "openai", "elevenlabs", "higgsfield", "api-market", "apimart"]),
+    provider: z.enum(["openrouter", "openai", "elevenlabs", "higgsfield", "api-market", "apimart", "deepseek"]),
     name: z.string().trim().min(1).max(80),
     config: z.object({
         baseUrl: z.string().max(200).optional(),

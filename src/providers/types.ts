@@ -12,7 +12,8 @@ export type ProviderId =
     | "elevenlabs"
     | "higgsfield"
     | "api-market"
-    | "apimart";
+    | "apimart"
+    | "deepseek";
 export type GenerationStatus = "CREATED" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "ERROR" | "CANCELLED";
 
 export interface GeneratedAsset {

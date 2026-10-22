@@ -61,5 +61,14 @@ export async function testProviderConnection(connection: ProviderConnection): Pr
         return { message: "APIMart conectado. El catálogo de imagen y vídeo se actualizará al guardar." };
     }
 
+    if (connection.provider === "deepseek") {
+        const baseUrl = (connection.config.baseUrl || "https://api.deepseek.com").replace(/\/$/, "");
+        const response = await providerFetch("deepseek", `${baseUrl}/v1/models`, {
+            headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) throw new Error(`ERR_DEEPSEEK_CONNECTION_FAILED: ${response.status}`);
+        return { message: "DeepSeek conectado" };
+    }
+
     throw new Error("ERR_PROVIDER_CONNECTION_TEST_UNSUPPORTED");
 }

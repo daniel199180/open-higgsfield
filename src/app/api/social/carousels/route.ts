@@ -18,13 +18,13 @@ import { requireCompany } from "@/library/server";
 
 export const runtime = "nodejs";
 
-const slideSchema = z.object({ id: z.uuid(), role: z.string().trim().min(1).max(50), title: z.string().trim().max(200), body: z.string().trim().max(500), visualPrompt: z.string().trim().max(800) }).strict();
+const slideSchema = z.object({ id: z.uuid(), role: z.string().trim().min(1).max(50), title: z.string().trim().max(200), body: z.string().trim().max(500), visualPrompt: z.string().trim().max(2000) }).strict();
 const ratioSchema = z.string().regex(/^\d{1,2}:\d{1,2}$/).refine(value => {
     const [w, h] = value.split(":").map(Number);
     return w > 0 && h > 0 && h / w <= 3.5 && w / h <= 3.5;
 });
 const commandSchema = z.discriminatedUnion("action", [
-    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), slidePrompts: z.array(z.string().trim().max(800)).max(10).optional(), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
+    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), slidePrompts: z.array(z.string().trim().max(2000)).max(10).optional(), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
     z.object({ action: z.literal("save"), id: z.uuid(), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slides: z.array(slideSchema).min(2).max(10) }).strict(),
     z.object({ action: z.literal("variant"), sourceId: z.uuid(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30) }).strict(),
 ]);

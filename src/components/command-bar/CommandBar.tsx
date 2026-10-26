@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Layers3, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronDown, Layers3, Loader2 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -101,6 +101,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     const [selectedImageFormats, setSelectedImageFormats] = useState<string[]>([]);
     const [carouselSlideCount, setCarouselSlideCount] = useState(5);
     const [carouselSlidePrompts, setCarouselSlidePrompts] = useState<string[]>(() => Array.from({ length: 5 }, () => ""));
+    const [openCarouselPromptIndex, setOpenCarouselPromptIndex] = useState<number | null>(0);
     const [carouselCountOpen, setCarouselCountOpen] = useState(false);
     const [sizeResolution, setSizeResolution] = useState(() => {
         const m = IMAGE_CAPABILITIES[firstImageId];
@@ -552,6 +553,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     const updateCarouselSlideCount = (count: number) => {
         setCarouselSlideCount(count);
         setCarouselSlidePrompts(current => Array.from({ length: count }, (_, index) => current[index] ?? ""));
+        setOpenCarouselPromptIndex(current => current === null ? 0 : Math.min(current, count - 1));
         setCarouselCountOpen(false);
     };
 
@@ -616,11 +618,14 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             if (remaining.length > 0 && referenceSlot && coverTaskId && remaining.some(slide => !slide.sourceTaskId)) {
                 coverReference = await waitForImageResult(coverTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current));
             }
-            for (const slide of remaining) {
-                const reference = slide.sourceTaskId && referenceSlot
-                    ? await waitForImageResult(slide.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
-                    : coverReference;
-                await submitSlide(slide, project.slides.findIndex(item => item.id === slide.id), reference);
+            if (remaining.length > 0) {
+                setPendingGeneration(current => current ? { ...current, progress: `Encolando ${remaining.length} página${remaining.length === 1 ? "" : "s"}…` } : current);
+                await Promise.all(remaining.map(async slide => {
+                    const reference = slide.sourceTaskId && referenceSlot
+                        ? await waitForImageResult(slide.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                        : coverReference;
+                    await submitSlide(slide, project.slides!.findIndex(item => item.id === slide.id), reference);
+                }));
             }
         } catch (cause) {
             const detail = cause instanceof Error ? cause.message : "No se pudo continuar.";
@@ -964,6 +969,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
 
                             {/* Prompt surface */}
                             <div className="flex-1 min-w-0 min-h-8">
+                                {mode === "carousel" && !isDragOverlayVisible && <p className="mb-1 text-[10px] font-bold uppercase tracking-[.08em] text-white/45">Prompt general del carrusel</p>}
                                 {isDragOverlayVisible && hasDropTargets ? (
                                     <div
                                         className="rounded-[14px] border border-dashed p-2.5"
@@ -1055,19 +1061,30 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                                     </div>
                                     <span className="shrink-0 text-[11px] tabular-nums text-[#ff7777]">{carouselSlidePrompts.filter(promptText => promptText.trim()).length}/{carouselSlideCount}</span>
                                 </div>
-                                <div className="grid max-h-52 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                                <div className="grid max-h-72 gap-2 overflow-y-auto pr-1">
                                     {carouselSlidePrompts.map((slidePrompt, index) => (
-                                        <label key={index} className="block rounded-xl border border-white/[.07] bg-black/20 p-2">
-                                            <span className="mb-1 block text-[10px] font-bold uppercase tracking-[.06em] text-white/45">Página {index + 1}</span>
-                                            <textarea
-                                                rows={2}
-                                                maxLength={800}
-                                                value={slidePrompt}
-                                                onChange={event => setCarouselSlidePrompts(current => current.map((value, promptIndex) => promptIndex === index ? event.target.value : value))}
-                                                placeholder={`Describe la imagen ${index + 1}…`}
-                                                className="w-full resize-none border-none bg-transparent text-xs leading-relaxed text-foreground outline-none placeholder:text-white/25"
-                                            />
-                                        </label>
+                                        <div key={index} className="overflow-hidden rounded-xl border border-white/[.07] bg-black/20">
+                                            <button
+                                                type="button"
+                                                aria-expanded={openCarouselPromptIndex === index}
+                                                onClick={() => setOpenCarouselPromptIndex(current => current === index ? null : index)}
+                                                className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-white/[.04]"
+                                            >
+                                                <span className="text-[11px] font-bold uppercase tracking-[.06em] text-white/65">Prompt de la página {index + 1}</span>
+                                                <ChevronDown size={15} className={`shrink-0 text-white/45 transition-transform ${openCarouselPromptIndex === index ? "rotate-180" : ""}`} />
+                                            </button>
+                                            {openCarouselPromptIndex === index && <div className="border-t border-white/[.07] p-3">
+                                                <textarea
+                                                    rows={7}
+                                                    maxLength={2000}
+                                                    value={slidePrompt}
+                                                    onChange={event => setCarouselSlidePrompts(current => current.map((value, promptIndex) => promptIndex === index ? event.target.value : value))}
+                                                    placeholder={`Escribe el prompt completo para la imagen ${index + 1}…`}
+                                                    className="w-full resize-y border-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-white/25"
+                                                />
+                                                <p className="mt-1 text-right text-[10px] tabular-nums text-white/30">{slidePrompt.length}/2000</p>
+                                            </div>}
+                                        </div>
                                     ))}
                                 </div>
                             </div>

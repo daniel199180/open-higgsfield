@@ -100,6 +100,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     // Never silently pick a provider default (many default to 16:9). The user chooses the canvas.
     const [selectedImageFormats, setSelectedImageFormats] = useState<string[]>([]);
     const [carouselSlideCount, setCarouselSlideCount] = useState(5);
+    const [carouselSlidePrompts, setCarouselSlidePrompts] = useState<string[]>(() => Array.from({ length: 5 }, () => ""));
     const [carouselCountOpen, setCarouselCountOpen] = useState(false);
     const [sizeResolution, setSizeResolution] = useState(() => {
         const m = IMAGE_CAPABILITIES[firstImageId];
@@ -548,6 +549,12 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     const sizeAspect = selectedImageFormats[0] ?? "";
     const selectedExtraFormatCount = Math.max(0, selectedImageFormats.length - 1);
 
+    const updateCarouselSlideCount = (count: number) => {
+        setCarouselSlideCount(count);
+        setCarouselSlidePrompts(current => Array.from({ length: count }, (_, index) => current[index] ?? ""));
+        setCarouselCountOpen(false);
+    };
+
     // Unified resolutions
     const imageResolutions: SizeUiResolution[] = imageModel.size_ui
         ? imageModel.size_ui.resolutions
@@ -704,13 +711,14 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 if (imageModel.media_slots.some(slot => slot.required)) throw new Error("Este modelo necesita una imagen inicial obligatoria. Elige otro modelo de imagen para el carrusel.");
                 const response = await fetch("/api/social/carousels", {
                     method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action: "create", name: brief.split(/[.!?\n]/)[0].slice(0, 100) || "Nuevo carrusel", brief, brandId: selectedBrand.id, companyId: companySelection.selectedId || undefined, characterId: selectedCharacter?.id, modelId: imageModelId, aspectRatio: sizeAspect, resolution: sizeResolution, fieldValues: imageFieldValues, slideCount: carouselSlideCount, language: locale.startsWith("pt") ? "Português (Brasil)" : locale.startsWith("en") ? "English" : "Español", autoStory: true }),
+                    body: JSON.stringify({ action: "create", name: brief.split(/[.!?\n]/)[0].slice(0, 100) || "Nuevo carrusel", brief, brandId: selectedBrand.id, companyId: companySelection.selectedId || undefined, characterId: selectedCharacter?.id, modelId: imageModelId, aspectRatio: sizeAspect, resolution: sizeResolution, fieldValues: imageFieldValues, slideCount: carouselSlideCount, slidePrompts: carouselSlidePrompts, language: locale.startsWith("pt") ? "Português (Brasil)" : locale.startsWith("en") ? "English" : "Español", autoStory: true }),
                 });
                 const result = await response.json().catch(() => ({})) as { project?: SocialProject; error?: string };
                 if (!response.ok || !result.project) throw new Error(result.error || "No se pudo crear el carrusel.");
                 const url = new URL(window.location.href); url.searchParams.set("carousel", result.project.id); window.history.replaceState(null, "", url);
                 window.dispatchEvent(new Event("open-higgsfield:carousel-updated"));
                 setValue("prompt", "");
+                setCarouselSlidePrompts(Array.from({ length: carouselSlideCount }, () => ""));
                 await runCarousel(result.project);
             } else if (mode === "video") {
                 const body = new FormData();
@@ -1038,6 +1046,33 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                             </div>
                         </div>
 
+                        {mode === "carousel" && (
+                            <div className="mt-1 rounded-2xl border border-white/[.08] bg-white/[.025] p-3">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-[11px] font-bold uppercase tracking-[.08em] text-white/70">Prompt de cada página</p>
+                                        <p className="mt-1 text-[11px] text-white/40">Puedes enviar un prompt específico para cada imagen. Si lo dejas vacío, se genera automáticamente desde la idea general.</p>
+                                    </div>
+                                    <span className="shrink-0 text-[11px] tabular-nums text-[#ff7777]">{carouselSlidePrompts.filter(promptText => promptText.trim()).length}/{carouselSlideCount}</span>
+                                </div>
+                                <div className="grid max-h-52 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                                    {carouselSlidePrompts.map((slidePrompt, index) => (
+                                        <label key={index} className="block rounded-xl border border-white/[.07] bg-black/20 p-2">
+                                            <span className="mb-1 block text-[10px] font-bold uppercase tracking-[.06em] text-white/45">Página {index + 1}</span>
+                                            <textarea
+                                                rows={2}
+                                                maxLength={800}
+                                                value={slidePrompt}
+                                                onChange={event => setCarouselSlidePrompts(current => current.map((value, promptIndex) => promptIndex === index ? event.target.value : value))}
+                                                placeholder={`Describe la imagen ${index + 1}…`}
+                                                className="w-full resize-none border-none bg-transparent text-xs leading-relaxed text-foreground outline-none placeholder:text-white/25"
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Control row (pills) */}
                         <div className="flex flex-wrap items-center gap-2 mt-[2px]">
                             <StudioModePill mode={mode} onModeChange={onModeChange} disabled={isGenerating} />
@@ -1110,7 +1145,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                                             onChange={setSizeResolution}
                                         />
                                     )}
-                                    {mode === "carousel" && <PillPopover open={carouselCountOpen} onOpenChange={setCarouselCountOpen} width="w-56" trigger={<><Layers3 className="h-4 w-4" /><span>{carouselSlideCount} imágenes</span></>}><p className="mb-2 text-[10px] font-extrabold uppercase tracking-[.08em] text-white/45">Páginas del carrusel</p><div className="grid grid-cols-5 gap-1.5">{Array.from({ length: 9 }, (_, index) => index + 2).map(count => <button key={count} type="button" aria-pressed={carouselSlideCount === count} onClick={() => { setCarouselSlideCount(count); setCarouselCountOpen(false); }} className={`rounded-lg px-2 py-2 text-xs font-bold ${carouselSlideCount === count ? "bg-[#c62828] text-white" : "bg-white/5 text-white hover:bg-white/10"}`}>{count}</button>)}</div><p className="mt-3 text-[11px] leading-relaxed text-white/45">Una imagen por página, con una sola historia y estilo visual.</p></PillPopover>}
+                                    {mode === "carousel" && <PillPopover open={carouselCountOpen} onOpenChange={setCarouselCountOpen} width="w-56" trigger={<><Layers3 className="h-4 w-4" /><span>{carouselSlideCount} imágenes</span></>}><p className="mb-2 text-[10px] font-extrabold uppercase tracking-[.08em] text-white/45">Páginas del carrusel</p><div className="grid grid-cols-5 gap-1.5">{Array.from({ length: 9 }, (_, index) => index + 2).map(count => <button key={count} type="button" aria-pressed={carouselSlideCount === count} onClick={() => updateCarouselSlideCount(count)} className={`rounded-lg px-2 py-2 text-xs font-bold ${carouselSlideCount === count ? "bg-[#c62828] text-white" : "bg-white/5 text-white hover:bg-white/10"}`}>{count}</button>)}</div><p className="mt-3 text-[11px] leading-relaxed text-white/45">Una imagen por página. Cada página puede tener su propio prompt.</p></PillPopover>}
                                     {mode === "image" && imageModel.custom_fields?.some((f) => f.type === "checkbox" && f.id.includes("prompt")) && (
                                         <TogglePill
                                             label={t("image.enhancePrompt")}

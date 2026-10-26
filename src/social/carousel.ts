@@ -62,7 +62,9 @@ export function carouselPrompt(project: SocialProject, slide: CarouselSlide, bra
                 : `Redacta e integra en la imagen un titular breve y legible en ${project.language}, y como máximo una frase de apoyo. La portada presenta el tema, las páginas intermedias desarrollan una idea diferente siguiendo su función narrativa y la última cierra con una llamada a la acción. No repitas el mismo titular ni conviertas esta página en un collage de otras. Respeta los datos del encargo; no inventes cifras, ofertas ni testimonios.`
             : `TEXTO VISIBLE EXACTO EN ${project.language.toUpperCase()}:\nTitular: ${slide.title.trim()}\n${slide.body.trim() ? `Texto secundario: ${slide.body.trim()}` : "No agregues texto secundario."}`,
         "No añadas logotipos inventados ni texto de otras diapositivas. Comprueba la ortografía.",
-        `Dirección visual específica: ${slide.visualPrompt.trim() || "Composición clara y legible, adecuada a la función de esta página."}`,
+        slide.visualPrompt.trim()
+            ? `PROMPT ESPECÍFICO DE ESTA PÁGINA. Sigue estas instrucciones para esta imagen sin mezclar contenido de otras páginas:\n${slide.visualPrompt.trim()}`
+            : "Composición clara y legible, adecuada a la función de esta página.",
         brandIdentityPrompt(brand),
         slide.sourceTaskId
             ? `La imagen adjunta es la MISMA página del carrusel original en otro formato. Conserva sujetos, producto, objetos, paleta, identidad y mensaje. Recompón la escena para el nuevo lienzo sin estirar ni recortar texto. ${autoCopy ? "Conserva el mensaje y el texto de la referencia sin inventar contenido nuevo." : "Recrea únicamente el texto exacto indicado arriba; no copies letras de la referencia."}`

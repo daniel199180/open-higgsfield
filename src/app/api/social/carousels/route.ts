@@ -24,7 +24,7 @@ const ratioSchema = z.string().regex(/^\d{1,2}:\d{1,2}$/).refine(value => {
     return w > 0 && h > 0 && h / w <= 3.5 && w / h <= 3.5;
 });
 const commandSchema = z.discriminatedUnion("action", [
-    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
+    z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), slidePrompts: z.array(z.string().trim().max(800)).max(10).optional(), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
     z.object({ action: z.literal("save"), id: z.uuid(), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slides: z.array(slideSchema).min(2).max(10) }).strict(),
     z.object({ action: z.literal("variant"), sourceId: z.uuid(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30) }).strict(),
 ]);
@@ -72,11 +72,12 @@ export async function POST(req: NextRequest) {
                 return project;
             }
             if (input.action === "create") {
+                if (input.slidePrompts && input.slidePrompts.length !== input.slideCount) throw new WorkflowError("La cantidad de prompts debe coincidir con la cantidad de páginas.", 400);
                 if (!docs.has(`brand:${input.brandId}`)) throw new WorkflowError("Selecciona un sistema de diseño válido.", 400);
                 const selectedCharacter = input.characterId ? docs.get(`character:${input.characterId}`) as Character | undefined : undefined;
                 if (input.characterId && (!selectedCharacter || selectedCharacter.archivedAt)) throw new WorkflowError("El personaje ya no está disponible.", 400);
                 if ([...docs.keys()].filter(key => key.startsWith("social:")).length >= 500) throw new WorkflowError("El historial de proyectos está lleno.", 409);
-                const slides: CarouselSlide[] = carouselRoles(input.slideCount).map(role => ({ id: crypto.randomUUID(), role, title: "", body: "", visualPrompt: "", taskIds: [] }));
+                const slides: CarouselSlide[] = carouselRoles(input.slideCount).map((role, index) => ({ id: crypto.randomUUID(), role, title: "", body: "", visualPrompt: input.slidePrompts?.[index] ?? "", taskIds: [] }));
                 const brand = docs.get(`brand:${input.brandId}`) as BrandSystem;
                 const project: SocialProject = { id: crypto.randomUUID(), name: input.name, brandId: input.brandId, companyId: input.companyId, character: selectedCharacter ? characterSnapshot(selectedCharacter) : undefined, format: "carousel", language: input.language, brief: input.brief, modelId: input.modelId, aspectRatio: input.aspectRatio, resolution: input.resolution, fieldValues: input.fieldValues ?? {}, slideCount: slides.length, taskIds: [], slides, autoStory: input.autoStory ?? false, status: "draft", createdAt: now, updatedAt: now };
                 validateCarouselProject(project, brand, selectedModel);

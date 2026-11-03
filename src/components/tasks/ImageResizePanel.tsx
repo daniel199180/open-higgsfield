@@ -25,6 +25,13 @@ function supportedFormats(model: ImageModelCapability): string[] {
   return [...new Set(raw.filter((ratio) => /^\d+:\d+$/.test(ratio)))];
 }
 
+function FormatIcon({ ratio }: { ratio: string }) {
+  const [width, height] = ratio.split(":").map(Number);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const scale = Math.min(18 / width, 16 / height);
+  return <span aria-hidden className="inline-block shrink-0 rounded-[3px] border-[1.5px] border-current" style={{ width: Math.max(6, width * scale), height: Math.max(6, height * scale) }} />;
+}
+
 function cleanSourcePrompt(value: string): string {
   const marker = "\n\nADAPTACIÓN DEL MISMO POST A ";
   const start = value.lastIndexOf(marker);
@@ -221,12 +228,13 @@ export function ImageResizePanel({ sourceTaskId, sourceIndex, sourceModelId, pro
             return <button
               key={format}
               type="button"
+              aria-label={`Formato ${format}`}
               aria-pressed={selected}
               disabled={busy}
               onClick={() => toggleFormat(format)}
               className={`flex min-h-10 items-center justify-center gap-1.5 rounded-xl border px-2 text-sm transition-colors disabled:opacity-50 ${selected ? "border-[#ff4d4d] bg-[#ff4d4d]/10 text-[#ff4d4d]" : "border-white/15 bg-white/[.03] text-white/75 hover:border-white/35"}`}
             >
-              {selected && <Check className="h-3.5 w-3.5" />}{format}
+              {selected && <Check className="h-3.5 w-3.5" />}<FormatIcon ratio={format} />{format}
             </button>;
           })}
         </div>

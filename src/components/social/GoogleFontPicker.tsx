@@ -13,22 +13,51 @@ async function fetchFonts(url: string): Promise<{ families: string[]; fallback: 
 
 /** Loads only the selected family, never a font file for every search result. */
 const previewFonts = new Map<string, { link: HTMLLinkElement; users: number }>();
-export function useGoogleFontPreview(family: string) {
+type FontPreview = { family: string; weight?: number; italic?: boolean };
+function previewHref({ family, weight, italic }: FontPreview) {
+    return googleFontCssUrl(family, weight ? [weight] : undefined, italic ?? false);
+}
+function getPreviewFont(font: FontPreview) {
+    const href = previewHref(font);
+    if (!href) return null;
+    let entry = previewFonts.get(href);
+    if (!entry) {
+        const link = document.createElement("link"); link.rel = "stylesheet"; link.href = href;
+        document.head.appendChild(link);
+        entry = { link, users: 0 }; previewFonts.set(href, entry);
+    }
+    return entry;
+}
+export function useGoogleFontPreview(family: string, weight?: number, italic = false) {
+    const stableWeight = weight ?? 400;
     useEffect(() => {
-        const href = googleFontCssUrl(family);
-        if (!href) return;
-        let entry = previewFonts.get(href);
-        if (!entry) {
-            const link = document.createElement("link"); link.rel = "stylesheet"; link.href = href;
-            document.head.appendChild(link);
-            entry = { link, users: 0 }; previewFonts.set(href, entry);
-        }
+        const entry = getPreviewFont({ family, weight: stableWeight, italic });
+        if (!entry) return;
         entry.users++;
-        return () => { if (--entry.users === 0) { entry.link.remove(); previewFonts.delete(href); } };
-    }, [family]);
+        return () => { if (--entry.users === 0) { const href = entry.link.href; entry.link.remove(); previewFonts.delete(href); } };
+    }, [family, stableWeight, italic]);
 }
 
-export function GoogleFontPicker({ label, value, onChange }: { label: string; value: string; onChange: (family: string) => void }) {
+/** Loads the selected families for dynamic typography rows in the brand editor. */
+export function useGoogleFontPreviews(fonts: FontPreview[]) {
+    const key = fonts.map(font => `${font.family}\u0000${font.weight ?? ""}\u0000${font.italic ? "1" : "0"}`).join("\u0001");
+    useEffect(() => {
+        const selectedFonts = key.split("\u0001").filter(Boolean).map(value => {
+            const [family, weight, italic] = value.split("\u0000");
+            return { family, weight: weight ? Number(weight) : undefined, italic: italic === "1" };
+        });
+        const entries = selectedFonts.map(getPreviewFont);
+        entries.forEach(entry => { if (entry) entry.users++; });
+        return () => entries.forEach(entry => {
+            if (entry && --entry.users === 0) {
+                const href = entry.link.href;
+                entry.link.remove(); previewFonts.delete(href);
+            }
+        });
+    }, [key]);
+}
+
+export function GoogleFontPicker({ label, value, onChange, weight = 400, italic = false }: { label: string; value: string; onChange: (family: string) => void; weight?: number; italic?: boolean }) {
     const id = useId();
     const trigger = useRef<HTMLButtonElement>(null);
     const [open, setOpen] = useState(false);
@@ -50,6 +79,6 @@ export function GoogleFontPicker({ label, value, onChange }: { label: string; va
             </div>
             {matching.length > 60 && <p className="mt-2 text-[11px] text-white/40">Se muestran 60 resultados. Escribe el nombre para encontrar más.</p>}
         </div>}
-        <p className="mt-2 truncate text-lg text-white/80" style={{ fontFamily: fontFamilyStyle(value) }}>Aa · Ideas que conectan</p>
+        <p className="mt-2 truncate text-lg text-white/80" style={{ fontFamily: fontFamilyStyle(value), fontWeight: weight, fontStyle: italic ? "italic" : "normal" }}>Aa · Ideas que conectan</p>
     </div>;
 }

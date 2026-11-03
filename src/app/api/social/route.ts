@@ -5,7 +5,7 @@ import { authorizeRequest, limitRequest, readLimitedBody } from "@/lib/api-secur
 import { workflowStore } from "@/workflows/store";
 import { WorkflowError, type Asset } from "@/workflows/types";
 import type { BrandSystem, SocialProject } from "@/social/types";
-import { brandLogoAssetIds, MAX_BRAND_LOGOS, MAX_BRAND_REFERENCES } from "@/social/brand";
+import { brandLogoAssetIds, brandMentionTokens, MAX_BRAND_LOGOS, MAX_BRAND_PALETTE_COLORS, MAX_BRAND_REFERENCES, MAX_BRAND_TYPOGRAPHIES } from "@/social/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +17,19 @@ const brandSchema = z.object({
     secondaryColor: z.string().regex(/^#[\da-fA-F]{6}$/),
     accentColor: z.string().regex(/^#[\da-fA-F]{6}$/),
     headingFont: z.string().trim().min(1).max(80),
+    headingFontWeight: z.number().int().min(100).max(900).optional(),
+    headingFontItalic: z.boolean().optional(),
     subheadingFont: z.string().trim().min(1).max(80).optional(),
+    subheadingFontWeight: z.number().int().min(100).max(900).optional(),
+    subheadingFontItalic: z.boolean().optional(),
     bodyFont: z.string().trim().min(1).max(80),
+    bodyFontWeight: z.number().int().min(100).max(900).optional(),
+    bodyFontItalic: z.boolean().optional(),
     secondaryBodyFont: z.string().trim().min(1).max(80).optional(),
+    secondaryBodyFontWeight: z.number().int().min(100).max(900).optional(),
+    secondaryBodyFontItalic: z.boolean().optional(),
+    paletteColors: z.array(z.object({ id: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(80), color: z.string().regex(/^#[\da-fA-F]{6}$/) }).strict()).max(MAX_BRAND_PALETTE_COLORS).optional(),
+    additionalTypographies: z.array(z.object({ id: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(80), family: z.string().trim().min(1).max(80), weight: z.number().int().min(100).max(900), italic: z.boolean().optional() }).strict()).max(MAX_BRAND_TYPOGRAPHIES).optional(),
     voice: z.string().trim().max(500),
     visualRules: z.string().trim().max(1000),
     negativePrompt: z.string().trim().max(2000).optional(),
@@ -71,13 +81,16 @@ export async function POST(req: NextRequest) {
                 const previous = input.brand.id ? docs.get(`brand:${input.brand.id}`) as BrandSystem | undefined : undefined;
                 if (input.brand.id && !previous) throw new WorkflowError("No se encontró el sistema de diseño.", 404);
                 const references = input.brand.references ?? previous?.references ?? [];
+                const paletteColors = input.brand.paletteColors ?? previous?.paletteColors ?? [];
+                const additionalTypographies = input.brand.additionalTypographies ?? previous?.additionalTypographies ?? [];
                 if (new Set(references.map(item => item.name)).size !== references.length) throw new WorkflowError("Cada referencia debe tener un nombre único.");
                 for (const reference of references) {
                     if ((docs.get(`asset:${reference.assetId}`) as Asset | undefined)?.kind !== "image") throw new WorkflowError(`Vuelve a subir la referencia @${reference.name}.`);
                 }
-                const mentions = [...input.brand.visualRules.matchAll(/@([a-z][a-z0-9_-]*)/gi)].map(match => match[1]);
-                if (mentions.some(name => !references.some(item => item.name === name))) throw new WorkflowError("Hay menciones en las reglas visuales que no corresponden a una referencia. Corrígelas antes de guardar.");
                 const logoAssetIds = brandLogoAssetIds(input.brand);
+                const mentions = [...input.brand.visualRules.matchAll(/@([a-z][a-z0-9_-]*)/gi)].map(match => match[1]);
+                const mentionTokens = new Set(brandMentionTokens({ ...input.brand, references, logoAssetIds }));
+                if (mentions.some(name => !mentionTokens.has(name.toLowerCase()))) throw new WorkflowError("Hay menciones en las reglas visuales que no corresponden a un texto, color, referencia o logo disponible. Corrígelas antes de guardar.");
                 if (logoAssetIds.length > MAX_BRAND_LOGOS) throw new WorkflowError(`Puedes guardar hasta ${MAX_BRAND_LOGOS} logos por sistema de diseño.`);
                 for (const id of logoAssetIds) {
                     const asset = docs.get(`asset:${id}`) as Asset | undefined;
@@ -89,9 +102,17 @@ export async function POST(req: NextRequest) {
                 }
                 if (!previous && [...docs.keys()].filter(key => key.startsWith("brand:")).length >= 50) throw new WorkflowError("Alcanzaste el límite de sistemas de diseño.", 409);
                 const now = Date.now();
-                const brand: BrandSystem = { ...input.brand, references, negativePrompt: input.brand.negativePrompt ?? previous?.negativePrompt ?? "", logoAssetIds, logoAssetId: logoAssetIds[0], id: previous?.id ?? crypto.randomUUID(), createdAt: previous?.createdAt ?? now, updatedAt: now };
+                const brand: BrandSystem = { ...input.brand, references, paletteColors, additionalTypographies, negativePrompt: input.brand.negativePrompt ?? previous?.negativePrompt ?? "", logoAssetIds, logoAssetId: logoAssetIds[0], id: previous?.id ?? crypto.randomUUID(), createdAt: previous?.createdAt ?? now, updatedAt: now };
                 brand.subheadingFont = input.brand.subheadingFont ?? previous?.subheadingFont ?? input.brand.headingFont;
                 brand.secondaryBodyFont = input.brand.secondaryBodyFont ?? previous?.secondaryBodyFont ?? input.brand.bodyFont;
+                brand.headingFontWeight = input.brand.headingFontWeight ?? previous?.headingFontWeight ?? 700;
+                brand.subheadingFontWeight = input.brand.subheadingFontWeight ?? previous?.subheadingFontWeight ?? 600;
+                brand.bodyFontWeight = input.brand.bodyFontWeight ?? previous?.bodyFontWeight ?? 400;
+                brand.secondaryBodyFontWeight = input.brand.secondaryBodyFontWeight ?? previous?.secondaryBodyFontWeight ?? 400;
+                brand.headingFontItalic = input.brand.headingFontItalic ?? previous?.headingFontItalic ?? false;
+                brand.subheadingFontItalic = input.brand.subheadingFontItalic ?? previous?.subheadingFontItalic ?? false;
+                brand.bodyFontItalic = input.brand.bodyFontItalic ?? previous?.bodyFontItalic ?? false;
+                brand.secondaryBodyFontItalic = input.brand.secondaryBodyFontItalic ?? previous?.secondaryBodyFontItalic ?? false;
                 docs.set(`brand:${brand.id}`, brand);
                 return brand;
             });

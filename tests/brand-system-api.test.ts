@@ -44,6 +44,15 @@ test("design systems persist references and prohibitions, validate mentions, and
     const fourFonts = await post(brandSaveInput({ ...saved, subheadingFont: "Oswald", secondaryBodyFont: "Lora" }));
     assert.equal(fourFonts.status, 200);
     Object.assign(saved, (await fourFonts.json()).brand);
+    const extendedIdentity = await post(brandSaveInput({ ...saved, headingFontWeight: 800, headingFontItalic: true, paletteColors: [{ id: "surface", name: "Superficie", color: "#123456" }], additionalTypographies: [{ id: "display", name: "Display", family: "Oswald", weight: 300, italic: true }] }));
+    assert.equal(extendedIdentity.status, 200);
+    Object.assign(saved, (await extendedIdentity.json()).brand);
+    assert.equal(saved.headingFontWeight, 800);
+    assert.equal(saved.headingFontItalic, true);
+    assert.deepEqual(saved.paletteColors, [{ id: "surface", name: "Superficie", color: "#123456" }]);
+    assert.deepEqual(saved.additionalTypographies, [{ id: "display", name: "Display", family: "Oswald", weight: 300, italic: true }]);
+    assert.equal((await post(brandSaveInput({ ...saved, visualRules: "Usa @color-superficie, @texto-display, @ejemplo y @logo-1." }))).status, 200);
+    assert.equal((await post(brandSaveInput({ ...saved, visualRules: "Usa @no-disponible." }))).status, 400);
     const edited = await post(brandSaveInput({ ...saved, name: "Editada" })); assert.equal(edited.status, 200);
     assert.deepEqual((await edited.json()).brand.references, draft.references);
     assert.equal((await post({ ...draft, references: [...draft.references, ...draft.references] })).status, 400);

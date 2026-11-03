@@ -11,10 +11,14 @@ export function googleFontFamilies(metadata: unknown): string[] {
     return [...new Set(rows.map(item => (item as { family?: unknown } | null)?.family).filter(validFontFamily))].sort((a, b) => a.localeCompare(b));
 }
 
-export function googleFontCssUrl(family: string): string | null {
+export function googleFontCssUrl(family: string, weights?: number[], italic = false): string | null {
     if (!validFontFamily(family)) return null;
     // Default style avoids requesting weights that some display families do not support.
-    return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}&display=swap`;
+    if (!weights?.length && !italic) return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}&display=swap`;
+    const supportedWeights = [...new Set((weights ?? [400]).filter(weight => Number.isInteger(weight) && weight >= 100 && weight <= 900))];
+    if (!supportedWeights.length) return null;
+    const axis = italic ? `ital,wght@1,${supportedWeights.join(";1,")}` : `wght@${supportedWeights.join(";")}`;
+    return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, "+")}:${axis}&display=swap`;
 }
 
 export function fontFamilyStyle(family: string): string {

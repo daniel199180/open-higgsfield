@@ -5,9 +5,21 @@ export interface BrandSystem {
     secondaryColor: string;
     accentColor: string;
     headingFont: string;
+    headingFontWeight?: number;
+    headingFontItalic?: boolean;
     subheadingFont?: string;
+    subheadingFontWeight?: number;
+    subheadingFontItalic?: boolean;
     bodyFont: string;
+    bodyFontWeight?: number;
+    bodyFontItalic?: boolean;
     secondaryBodyFont?: string;
+    secondaryBodyFontWeight?: number;
+    secondaryBodyFontItalic?: boolean;
+    /** Extra swatches in addition to the three core colors above. */
+    paletteColors?: BrandPaletteColor[];
+    /** Extra type roles in addition to the four core roles above. */
+    additionalTypographies?: BrandTypography[];
     voice: string;
     visualRules: string;
     negativePrompt?: string;
@@ -17,6 +29,20 @@ export interface BrandSystem {
     logoVectorAssetId?: string;
     createdAt: number;
     updatedAt: number;
+}
+
+export interface BrandPaletteColor {
+    id: string;
+    name: string;
+    color: string;
+}
+
+export interface BrandTypography {
+    id: string;
+    name: string;
+    family: string;
+    weight: number;
+    italic?: boolean;
 }
 
 export interface CharacterSnapshot {

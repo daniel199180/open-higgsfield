@@ -41,7 +41,7 @@ import { CompanySelect, useCompanySelection } from "@/components/command-bar/Com
 import type { Character } from "@/social/types";
 import type { BrandSystem } from "@/social/types";
 import type { SocialProject } from "@/social/types";
-import { brandLogoAssetIds, brandImageAssetIds, brandTypographyPrompt } from "@/social/brand";
+import { brandIdentityPrompt, brandLogoAssetIds, brandImageAssetIds } from "@/social/brand";
 import { PillPopover } from "@/components/command-bar/PillPopover";
 import { StudioModePill, type StudioMode } from "@/components/studio/StudioModePill";
 import { LogoComposer } from "@/components/command-bar/LogoComposer";
@@ -691,15 +691,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             if (mode === "video" && selectedCharacter && selectedBrand && brandLogoAssetIds(selectedBrand).length > 0) {
                 throw new Error("Este modelo de video no puede recibir a la vez todas las fotos del personaje y los logos de marca. Genera primero una imagen con ambos y úsala como fotograma inicial.");
             }
-            const brandPrompt = selectedBrand ? [
-                `Identidad visual de marca: ${selectedBrand.name}.`,
-                `Colores: principal ${selectedBrand.primaryColor}; secundario ${selectedBrand.secondaryColor}; acento ${selectedBrand.accentColor}.`,
-                brandTypographyPrompt(selectedBrand),
-                selectedBrand.voice ? `Tono: ${selectedBrand.voice}.` : "",
-                selectedBrand.visualRules ? `Reglas visuales: ${selectedBrand.visualRules}.` : "",
-                selectedBrand.negativePrompt ? `Prohibiciones de marca: ${selectedBrand.negativePrompt}` : "",
-                "Respeta esta identidad de forma coherente. Conserva el idioma y el texto solicitado en el prompt.",
-            ].filter(Boolean).join("\n") : "";
+            const brandPrompt = selectedBrand ? brandIdentityPrompt(selectedBrand) : "";
             const finalPrompt = [data.prompt, brandPrompt].filter(Boolean).join("\n\n");
             const promptMax = mode === "video" ? (videoModel.prompt_max ?? 2500) : (imageModel.prompt_max ?? 10000);
             if ((mode === "video" ? finalPrompt : data.prompt).length > promptMax) {

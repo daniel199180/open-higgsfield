@@ -1,10 +1,12 @@
 export const OPENROUTER_EDIT_MODELS = [
+    { id: "openai/gpt-image-2.6-sunburst", label: "OpenRouter · GPT Image 2.6 Sunburst · precisión" },
+    { id: "openai/gpt-image-2.6-flare", label: "OpenRouter · GPT Image 2.6 Flare · rápido" },
     { id: "openai/gpt-image-2.5-sunburst", label: "OpenRouter · GPT Image 2.5 Sunburst · precisión" },
     { id: "openai/gpt-image-2.5-flare", label: "OpenRouter · GPT Image 2.5 Flare · rápido" },
 ] as const;
 
 export type OpenRouterEditModel = (typeof OPENROUTER_EDIT_MODELS)[number]["id"];
-export const DEFAULT_OPENROUTER_EDIT_MODEL: OpenRouterEditModel = "openai/gpt-image-2.5-sunburst";
+export const DEFAULT_OPENROUTER_EDIT_MODEL: OpenRouterEditModel = "openai/gpt-image-2.6-sunburst";
 
 export function isOpenRouterEditModel(value: string): value is OpenRouterEditModel {
     return OPENROUTER_EDIT_MODELS.some((model) => model.id === value);

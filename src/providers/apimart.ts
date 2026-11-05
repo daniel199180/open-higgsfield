@@ -82,6 +82,12 @@ function imagePayload(request: ProviderGenerationRequest): Record<string, unknow
         size: request.params.size || request.params.aspect_ratio || undefined,
         resolution: request.params.resolution || undefined,
         quality: values.quality || undefined,
+        complexity: values.complexity || undefined,
+        output_format: values.output_format || undefined,
+        output_compression: values.output_compression === undefined ? undefined : Number(values.output_compression),
+        background: values.background || undefined,
+        frame_count: values.frame_count === undefined ? undefined : Number(values.frame_count),
+        frame_duration_ms: values.frame_duration_ms === undefined ? undefined : Number(values.frame_duration_ms),
         n: Number(values.n ?? 1),
         image_urls: references.length ? references : undefined,
     }).filter(([, value]) => value !== undefined && value !== ""));

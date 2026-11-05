@@ -8,8 +8,9 @@ import { editGuideForOpenRouter, ImageEditInputError, maskForImageEdit, normaliz
 import { MAX_EDITOR_MODEL_ID_LENGTH } from "../src/lib/image-edit-validation";
 
 test("image editor offers only compatible OpenRouter GPT Image models", () => {
-    assert.equal(DEFAULT_OPENROUTER_EDIT_MODEL, "openai/gpt-image-2.5-sunburst");
-    assert.deepEqual(OPENROUTER_EDIT_MODELS.map((model) => model.id), ["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare"]);
+    assert.equal(DEFAULT_OPENROUTER_EDIT_MODEL, "openai/gpt-image-2.6-sunburst");
+    assert.deepEqual(OPENROUTER_EDIT_MODELS.map((model) => model.id), ["openai/gpt-image-2.6-sunburst", "openai/gpt-image-2.6-flare", "openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare"]);
+    assert.equal(isOpenRouterEditModel("openai/gpt-image-2.6-flare"), true);
     assert.equal(isOpenRouterEditModel("openai/gpt-image-2.5-flare"), true);
     assert.equal(isOpenRouterEditModel("gpt-image-2.5-flare"), false);
     const compatible = { id: "openai/gpt-image-2.5-sunburst", architecture: { input_modalities: ["image", "text"], output_modalities: ["image"] }, supported_parameters: { input_references: { max: 2 }, quality: { values: ["high", "medium"] }, aspect_ratio: { values: ["auto", "1:1"] } } };

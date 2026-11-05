@@ -60,8 +60,12 @@ function imagePayload(request: ProviderGenerationRequest): Record<string, unknow
         seed: request.params.seed,
         n: Number(values.n ?? 1),
         quality: values.quality || undefined,
+        complexity: values.complexity || undefined,
         output_format: values.output_format || undefined,
         background: values.background || undefined,
+        output_compression: values.output_compression === undefined ? undefined : Number(values.output_compression),
+        frame_count: values.frame_count === undefined ? undefined : Number(values.frame_count),
+        frame_duration_ms: values.frame_duration_ms === undefined ? undefined : Number(values.frame_duration_ms),
     };
     const references = getMediaUrls(request.media);
     if (references.length > 0) {

@@ -50,6 +50,32 @@ test("OpenRouter adapter: request contract, responses, safe failures and no retr
         if (result.status === "COMPLETED") assert.equal(Buffer.from(result.assets[0].data!).toString(), "test-image");
         assert.equal(mock.mock.callCount(), 1);
     });
+    await t.test("passes GPT Image 2.6 controls through the unified image API", async (t) => {
+        const mock = t.mock.method(globalThis, "fetch", async (_url: URL, options: RequestInit) => {
+            const payload = JSON.parse(options.body as string);
+            assert.equal(payload.model, "openai/gpt-image-2.6-sunburst");
+            assert.equal(payload.complexity, "high");
+            assert.equal(payload.output_format, "png");
+            assert.equal(payload.background, "opaque");
+            assert.equal(payload.output_compression, 80);
+            assert.equal(payload.frame_count, 8);
+            assert.equal(payload.frame_duration_ms, 120);
+            return Response.json({ data: [{ b64_json: Buffer.from("gpt-image-2.6").toString("base64"), media_type: "image/png" }] });
+        });
+        const result = await provider.submit({
+            ...request,
+            providerModelId: "openai/gpt-image-2.6-sunburst",
+            params: {
+                ...request.params,
+                field_values: {
+                    complexity: "high", output_format: "png", background: "opaque",
+                    output_compression: 80, frame_count: 8, frame_duration_ms: 120,
+                },
+            },
+        });
+        assert.equal(result.status, "COMPLETED");
+        assert.equal(mock.mock.callCount(), 1);
+    });
     await t.test("reuses a private image as a reference for a second format without Cloudinary", async (t) => {
         const { imageReferenceForProvider } = await import("../src/lib/image-reference");
         const source = Buffer.from("test-reference-image");

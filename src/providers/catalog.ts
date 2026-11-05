@@ -63,6 +63,47 @@ function numericField(value: unknown): number | undefined {
     return undefined;
 }
 
+function numericBounds(value: unknown, fallbackMin: number, fallbackMax: number): { min: number; max: number } {
+    if (!value || typeof value !== "object") return { min: fallbackMin, max: fallbackMax };
+    const record = value as Record<string, unknown>;
+    const min = typeof record.min === "number" && Number.isFinite(record.min) ? record.min : fallbackMin;
+    const max = typeof record.max === "number" && Number.isFinite(record.max) ? record.max : fallbackMax;
+    return { min: Math.min(min, max), max: Math.max(min, max) };
+}
+
+function hasParameter(parameters: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(parameters, key);
+}
+
+function appendImageParameterFields(fields: CustomFieldCapability[], supported: Record<string, unknown>): void {
+    const selects: Array<[string, string]> = [
+        ["quality", "Quality"],
+        ["complexity", "Complexity"],
+        ["output_format", "Output format"],
+        ["background", "Background"],
+    ];
+    for (const [id, label] of selects) {
+        const options = fieldOptions(supported[id]);
+        if (options.length) fields.push({ id, label, type: "select", options, default: options[0] });
+    }
+    if (hasParameter(supported, "n")) {
+        const bounds = numericBounds(supported.n, 1, 1);
+        fields.push({ id: "n", label: "Images", type: "number", default: bounds.min, minimum: bounds.min, maximum: bounds.max });
+    }
+    if (hasParameter(supported, "output_compression")) {
+        const bounds = numericBounds(supported.output_compression, 0, 100);
+        fields.push({ id: "output_compression", label: "Compression", type: "number", default: bounds.max, minimum: bounds.min, maximum: bounds.max });
+    }
+    if (hasParameter(supported, "frame_count")) {
+        const bounds = numericBounds(supported.frame_count, 2, 64);
+        fields.push({ id: "frame_count", label: "GIF frames", type: "number", default: bounds.min, minimum: bounds.min, maximum: bounds.max });
+    }
+    if (hasParameter(supported, "frame_duration_ms")) {
+        const bounds = numericBounds(supported.frame_duration_ms, 20, 2000);
+        fields.push({ id: "frame_duration_ms", label: "GIF frame duration (ms)", type: "number", default: bounds.min, minimum: bounds.min, maximum: bounds.max });
+    }
+}
+
 function openRouterHeaders(connection: ProviderConnection): Record<string, string> {
     const headers: Record<string, string> = { Authorization: `Bearer ${connection.credentials.apiKey}` };
     if (connection.config.httpReferer) headers["HTTP-Referer"] = connection.config.httpReferer;
@@ -88,7 +129,7 @@ async function openRouterModels(connection: ProviderConnection, mediaType: Media
             if (ratios.length) customFields.push({ id: "aspect_ratio", label: "Aspect ratio", type: "select", options: ratios, default: ratios[0] });
             if (resolutions.length) customFields.push({ id: "resolution", label: "Resolution", type: "select", options: resolutions, default: resolutions[0] });
             if (supported.seed) customFields.push({ id: "seed", label: "Seed", type: "number" });
-            if (supported.quality) customFields.push({ id: "quality", label: "Quality", type: "select", options: fieldOptions(supported.quality) });
+            appendImageParameterFields(customFields, supported);
             return baseCapability({
                 id: runtimeId("openrouter", "image", connection.id, id),
                 label,
@@ -244,7 +285,6 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     const supported = (model.supported_parameters ?? model.parameters ?? {}) as Record<string, unknown>;
     const ratios = fieldOptions(supported.aspect_ratio ?? model.aspect_ratios);
     const resolutions = fieldOptions(supported.resolution ?? model.resolutions);
-    const qualities = fieldOptions(supported.quality);
     const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities).map((value) => value.toLowerCase());
     const modelText = `${id} ${label}`.toLowerCase();
     // APIMart's model list is inconsistent across versions. Keep explicit
@@ -283,7 +323,11 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
                 ...(acceptsReferenceAudio ? [{ id: "reference_audio", label: "Audio de referencia", kind: "audio" as const, multiple: true, type: "reference" }] : []),
             ],
         custom_fields: image
-            ? (qualities.length ? [{ id: "quality", label: "Calidad", type: "select", options: qualities, default: qualities[0] }] : [])
+            ? (() => {
+                const fields: CustomFieldCapability[] = [];
+                appendImageParameterFields(fields, supported);
+                return fields;
+            })()
             : [{ id: "generate_audio", label: "Generar audio", type: "checkbox", default: false }],
         sort_key: 5500 - index,
     });

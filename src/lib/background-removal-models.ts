@@ -4,6 +4,8 @@ export interface BackgroundRemovalModel {
 }
 
 const PREFERRED = [
+    "openai/gpt-image-2.6-sunburst",
+    "openai/gpt-image-2.6-flare",
     "openai/gpt-image-2.5-sunburst",
     "openai/gpt-image-2.5-flare",
     "openai/gpt-image-2",

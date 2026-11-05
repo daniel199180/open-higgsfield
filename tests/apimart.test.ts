@@ -31,6 +31,33 @@ test("APIMart uses its fixed official API, Bearer credentials, and asynchronous 
         assert.equal(mock.mock.callCount(), 1);
     });
 
+    await t.test("passes GPT Image 2.6 controls to APIMart", async (t) => {
+        const mock = t.mock.method(globalThis, "fetch", async (_url: URL, options: RequestInit) => {
+            const payload = JSON.parse(options.body as string);
+            assert.deepEqual(payload, {
+                model: "gpt-image-2.6-sunburst", prompt: "A ceramic mug", size: "1:1", resolution: "2k",
+                quality: "high", complexity: "high", output_format: "png", output_compression: 80,
+                background: "transparent", frame_count: 8, frame_duration_ms: 120, n: 1,
+                image_urls: ["https://cdn.example/source.png"],
+            });
+            return Response.json({ code: 200, data: [{ status: "submitted", task_id: "task-image-2-6" }] });
+        });
+        const result = await provider.submit({
+            ...image,
+            providerModelId: "gpt-image-2.6-sunburst",
+            params: {
+                ...image.params,
+                field_values: {
+                    quality: "high", complexity: "high", output_format: "png", output_compression: 80,
+                    background: "transparent", frame_count: 8, frame_duration_ms: 120,
+                },
+            },
+        });
+        assert.equal(result.status, "CREATED");
+        assert.equal(result.providerTaskId, "task-image-2-6");
+        assert.equal(mock.mock.callCount(), 1);
+    });
+
     await t.test("submits videos and resolves a completed task without retrying", async (t) => {
         const video = { ...image, mediaType: "video" as const, providerModelId: "doubao-seedance-2.0", params: { ...image.params, duration: "5", field_values: { generate_audio: true } }, media: { images: { start_image: "https://cdn.example/first.png", end_image: "https://cdn.example/last.png" } } };
         const mock = t.mock.method(globalThis, "fetch", async (url: URL, options?: RequestInit) => {

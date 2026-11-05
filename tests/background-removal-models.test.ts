@@ -8,6 +8,8 @@ test("background removal only offers GPT image models with input images and tran
         supported_parameters: { background: { values: ["auto", "transparent", "opaque"] }, output_format: { values: ["png", "webp"] } },
     });
     const models = backgroundRemovalModels([
+        eligible("openai/gpt-image-2.6-flare"),
+        eligible("openai/gpt-image-2.6-sunburst"),
         eligible("openai/gpt-image-2.5-flare"),
         eligible("openai/gpt-image-2.5-sunburst"),
         { ...eligible("openai/gpt-image-2"), supported_parameters: { background: { values: ["opaque"] } } },
@@ -15,6 +17,6 @@ test("background removal only offers GPT image models with input images and tran
         { ...eligible("openai/gpt-image-1"), supported_parameters: { background: { values: ["transparent"] }, output_format: { values: ["jpeg"] } } },
         eligible("sourceful/riverflow-v2.5"),
     ]);
-    assert.deepEqual(models.map((model) => model.id), ["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare"]);
+    assert.deepEqual(models.map((model) => model.id), ["openai/gpt-image-2.6-sunburst", "openai/gpt-image-2.6-flare", "openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare"]);
     assert.deepEqual(backgroundRemovalModels(null), []);
 });

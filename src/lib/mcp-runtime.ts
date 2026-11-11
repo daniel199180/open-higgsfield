@@ -25,7 +25,8 @@ function mediaSignature(server: McpServerConfig, taskId: string, index: number, 
 export function signedMediaUrl(req: NextRequest, server: McpServerConfig, taskId: string, index: number): string {
     const expires = Math.floor(Date.now() / 1000) + 60 * 60;
     const signature = mediaSignature(server, taskId, index, expires);
-    return new URL(`/api/mcp/${server.id}/media/${taskId}?index=${index}&expires=${expires}&signature=${signature}`, req.nextUrl.origin).href;
+    const publicOrigin = process.env.OPEN_HIGGSFIELD_APP_ORIGIN || req.nextUrl.origin;
+    return new URL(`/api/mcp/${server.id}/media/${taskId}?index=${index}&expires=${expires}&signature=${signature}`, publicOrigin).href;
 }
 
 export function verifyMediaSignature(server: McpServerConfig, taskId: string, index: number, expires: number, signature: string): boolean {

@@ -8,7 +8,7 @@ import type { ModelCapabilities } from "@/models/capabilities/types";
 import { getImageRoles, getVideoOverrides, getImageField, isImageRequired } from "@/models/capabilities/video-helpers";
 import type { AttachmentItem } from "@/components/studio/AttachmentZone";
 import { useTranslations } from "next-intl";
-import { GalleryImagePicker, type GalleryImage } from "@/components/studio/GalleryImagePicker";
+import { GalleryResourcePicker, type GalleryResource } from "@/components/studio/GalleryResourcePicker";
 
 function shortId() {
     return Math.random().toString(36).slice(2, 10);
@@ -124,7 +124,7 @@ export function AttachmentButton({ model, attachments, onAttachmentsChange }: At
                         savedIds={savedIds}
                         onAddFile={(f) => addFile(role.id, f, role.kind)}
                         onAddUrl={(u) => addUrl(role.id, u, role.kind)}
-                        onPickGallery={(image) => addUrl(role.id, image.url, "image")}
+                        onPickGallery={(resource) => addUrl(role.id, resource.url, resource.kind)}
                         onSaveFile={async (item) => {
                             if (!item.file || item.kind !== "image") return;
                             const response = await fetch("/api/gallery/images", { method: "POST", headers: { "Content-Type": item.file.type || "image/png" }, body: item.file });
@@ -157,7 +157,7 @@ interface RoleUploadProps {
     savedIds: string[];
     onAddFile: (file: File) => void;
     onAddUrl: (url: string) => void;
-    onPickGallery: (image: GalleryImage) => void;
+    onPickGallery: (resource: GalleryResource) => void;
     onSaveFile: (item: AttachmentItem) => Promise<void>;
     onRemove: (id: string) => void;
     t: ReturnType<typeof useTranslations<"commandBar">>;
@@ -221,7 +221,7 @@ function RoleUpload({ label, kind, required, multiple, items, savedIds, onAddFil
                     <Upload className="h-3 w-3" />
                     {t("upload")}
                 </button>
-                {kind === "image" && <GalleryImagePicker compact onPick={onPickGallery} />}
+                <GalleryResourcePicker kind={kind} compact onPick={onPickGallery} />
                 <button
                     type="button"
                     onClick={() => setShowUrl(!showUrl)}

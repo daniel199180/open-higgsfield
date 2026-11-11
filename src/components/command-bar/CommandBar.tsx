@@ -11,7 +11,7 @@ import { z } from "zod";
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
 import { getEditVariant, getImageAspectRatios, requiresImageAspectRatio } from "@/models/capabilities/image-helpers";
-import { getVideoOverrides, getDurations, getAspectRatios, hasAttachments as videoHasAttachments } from "@/models/capabilities/video-helpers";
+import { getVideoOverrides, getDurations, getAspectRatios, getResolutionVariants, hasAttachments as videoHasAttachments } from "@/models/capabilities/video-helpers";
 import type { AttachmentRole } from "@/models/capabilities/video-helpers";
 import type { MediaSlotCapability } from "@/models/capabilities/types";
 import { hasActiveModelApi } from "@/lib/model-availability";
@@ -32,6 +32,7 @@ import { ResolutionPill } from "@/components/command-bar/ResolutionPill";
 import { TogglePill } from "@/components/command-bar/TogglePill";
 import { ControlsPill } from "@/components/command-bar/ControlsPill";
 import { VideoControlsPill } from "@/components/command-bar/VideoControlsPill";
+import { VideoResolutionPill } from "@/components/command-bar/VideoResolutionPill";
 import { AttachmentButton } from "@/components/command-bar/AttachmentButton";
 import { ImageAttachmentButton } from "@/components/command-bar/ImageAttachmentButton";
 import { GenerationPrice } from "@/components/studio/GenerationPrice";
@@ -103,6 +104,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     const [carouselSlidePrompts, setCarouselSlidePrompts] = useState<string[]>(() => Array.from({ length: 5 }, () => ""));
     const [openCarouselPromptIndex, setOpenCarouselPromptIndex] = useState<number | null>(0);
     const [carouselCountOpen, setCarouselCountOpen] = useState(false);
+    const [composerCollapsed, setComposerCollapsed] = useState(false);
     const [sizeResolution, setSizeResolution] = useState(() => {
         const m = IMAGE_CAPABILITIES[firstImageId];
         if (m?.size_ui) return m.size_ui.default_resolution ?? "";
@@ -872,8 +874,26 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 style={{ width: "min(70rem, 100%)" }}
             >
                 {/* Composer card */}
+                {composerCollapsed ? (
+                    <div className="flex justify-end">
+                        <button
+                            type="button"
+                            aria-label="Mostrar chat de generación"
+                            title="Mostrar chat"
+                            onClick={() => setComposerCollapsed(false)}
+                            className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/[.12] px-3 py-2 text-[11px] font-bold text-white/70 shadow-xl transition hover:bg-white/[.08] hover:text-white"
+                            style={{
+                                backdropFilter: "blur(20px)",
+                                background: "rgba(16,16,16,.94)",
+                            }}
+                        >
+                            <span>Mostrar chat</span>
+                            <ChevronDown size={15} className="rotate-180" />
+                        </button>
+                    </div>
+                ) : (
                 <div
-                    className="rounded-[28px] border border-white/[.08] flex flex-col items-stretch gap-3 sm:flex-row"
+                    className="relative rounded-[28px] border border-white/[.08] flex flex-col items-stretch gap-3 sm:flex-row"
                     style={{
                         backdropFilter: "blur(26px)",
                         background: "radial-gradient(circle at 92% 82%, rgba(255,77,77,.07), transparent 18%), linear-gradient(90deg, rgba(12,12,12,.96), rgba(20,20,20,.92) 52%, rgba(24,24,24,.88))",
@@ -881,6 +901,19 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                         padding: "12px",
                     }}
                 >
+                    <button
+                        type="button"
+                        aria-label="Ocultar chat de generación"
+                        title="Ocultar chat"
+                        onClick={() => setComposerCollapsed(true)}
+                        className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-full border border-white/[.14] text-white/65 shadow-lg transition hover:bg-white/[.10] hover:text-white"
+                        style={{
+                            backdropFilter: "blur(14px)",
+                            background: "rgba(24,24,24,.92)",
+                        }}
+                    >
+                        <ChevronDown size={15} />
+                    </button>
                     {/* Content: prompt + pills */}
                     <div className="flex-1 min-w-0 flex flex-col justify-between">
                         {/* Main prompt area */}
@@ -960,7 +993,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                             )}
 
                             {/* Prompt surface */}
-                            <div className="flex-1 min-w-0 min-h-8">
+                            <div className="flex-1 min-w-0 min-h-8 pr-10">
                                 {mode === "carousel" && !isDragOverlayVisible && <p className="mb-1 text-[10px] font-bold uppercase tracking-[.08em] text-white/45">Prompt general del carrusel</p>}
                                 {isDragOverlayVisible && hasDropTargets ? (
                                     <div
@@ -1051,7 +1084,18 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                                         <p className="text-[11px] font-bold uppercase tracking-[.08em] text-white/70">Prompt de cada página</p>
                                         <p className="mt-1 text-[11px] text-white/40">Puedes enviar un prompt específico para cada imagen. Si lo dejas vacío, se genera automáticamente desde la idea general.</p>
                                     </div>
-                                    <span className="shrink-0 text-[11px] tabular-nums text-[#ff7777]">{carouselSlidePrompts.filter(promptText => promptText.trim()).length}/{carouselSlideCount}</span>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        <span className="text-[11px] tabular-nums text-[#ff7777]">{carouselSlidePrompts.filter(promptText => promptText.trim()).length}/{carouselSlideCount}</span>
+                                        <button
+                                            type="button"
+                                            aria-label={openCarouselPromptIndex === null ? "Mostrar prompts de las páginas" : "Ocultar prompts de las páginas"}
+                                            title={openCarouselPromptIndex === null ? "Mostrar prompts" : "Ocultar prompts"}
+                                            onClick={() => setOpenCarouselPromptIndex(current => current === null ? 0 : null)}
+                                            className="grid h-7 w-7 place-items-center rounded-lg border border-white/[.08] text-white/55 transition hover:bg-white/[.06] hover:text-white"
+                                        >
+                                            <ChevronDown size={15} className={`transition-transform ${openCarouselPromptIndex === null ? "" : "rotate-180"}`} />
+                                        </button>
+                                    </div>
                                 </div>
                                 <div className="grid max-h-72 gap-2 overflow-y-auto pr-1">
                                     {carouselSlidePrompts.map((slidePrompt, index) => (
@@ -1101,6 +1145,13 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                                             durations={getDurations(videoModel)}
                                             value={videoSettings.duration}
                                             onChange={(d) => setVideoSettings((s) => ({ ...s, duration: d }))}
+                                        />
+                                    )}
+                                    {(getResolutionVariants(videoModel)?.length ?? 0) > 0 && (
+                                        <VideoResolutionPill
+                                            options={getResolutionVariants(videoModel)!.map((variant) => variant.label)}
+                                            value={videoVariantId}
+                                            onChange={(variant) => handleVideoModelChange(videoModelId, variant)}
                                         />
                                     )}
                                     {(getAspectRatios(videoModel)?.length ?? 0) > 0 && !attachments.some(a => a.kind === "image") && (
@@ -1204,6 +1255,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                         </small>
                     </button>
                 </div>
+                )}
             </form>
         </div>
     );

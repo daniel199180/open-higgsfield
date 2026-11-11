@@ -6,6 +6,7 @@ import { PillPopover } from "./PillPopover";
 import { Input } from "@/components/ui/input";
 import type { MediaSlotCapability } from "@/models/capabilities/types";
 import { useTranslations } from "next-intl";
+import { GalleryResourcePicker, type GalleryResource } from "@/components/studio/GalleryResourcePicker";
 
 interface ImageAttachmentButtonProps {
     slots: MediaSlotCapability[];
@@ -74,6 +75,17 @@ function SlotUpload({ slot, file, onFile, t }: SlotUploadProps) {
     const [urlInput, setUrlInput] = useState("");
     const [showUrl, setShowUrl] = useState(false);
 
+    async function chooseGallery(resource: GalleryResource) {
+        try {
+            const response = await fetch(resource.url, { cache: "no-store" });
+            if (!response.ok) throw new Error("No se pudo cargar el recurso de la galería.");
+            const blob = await response.blob();
+            onFile(new File([blob], `${resource.id.replace(/[^a-z0-9_-]/gi, "-")}.png`, { type: blob.type || "image/png" }));
+        } catch {
+            // Upload and URL remain available if a gallery resource expires.
+        }
+    }
+
     return (
         <div className="rounded-[12px] border p-2.5 space-y-1.5" style={{ borderColor: "rgba(255,255,255,.08)", background: "rgba(255,255,255,.03)" }}>
             <div className="flex items-center gap-1.5">
@@ -121,6 +133,7 @@ function SlotUpload({ slot, file, onFile, t }: SlotUploadProps) {
                         <Upload className="h-3 w-3" />
                         {t("upload")}
                     </button>
+                    <GalleryResourcePicker kind="image" compact onPick={(resource) => void chooseGallery(resource)} />
                     {slot.accept !== "b64_only" && (
                         <button
                             type="button"

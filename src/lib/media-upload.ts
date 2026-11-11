@@ -71,6 +71,7 @@ export async function resolveUrl(url: string): Promise<ResolvedMedia> {
         const { asset, data } = await readAsset(id);
         if (asset.kind === "image") return { ...(await processImageUpload(data)), localUrl: url };
         if (asset.kind === "video") return { ...(await processFileUpload(data, `${id}.mp4`, asset.mime)), localUrl: url };
+        if (asset.kind === "audio") return { ...(await processFileUpload(data, `${id}.${asset.mime === "audio/wav" ? "wav" : "mp3"}`, asset.mime)), localUrl: url };
         throw new Error("ERR_INVALID_MEDIA_TYPE");
     }
     if (url.startsWith("/api/download/")) {

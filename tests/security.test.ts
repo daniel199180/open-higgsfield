@@ -113,23 +113,34 @@ test("single-admin setup, encrypted connections and security boundaries", async 
         await assert.rejects(readJsonBody(new Request("https://example.com", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: "a".repeat(17000) }) })), /ERR_BODY_TOO_LARGE/);
     });
     await t.test("MCP transport reaches its bearer authentication without an admin session", async () => {
-        process.env.OPEN_HIGGSFIELD_APP_ORIGIN = "https://studio.example.com";
-        const proxy = (await import("../src/proxy")).default;
-        const { bearerToken, signedMediaUrl } = await import("../src/lib/mcp-runtime");
-        const mcpResponse = await proxy(new NextRequest("https://studio.example.com/api/mcp/00000000-0000-4000-8000-000000000000", { method: "POST" }));
-        assert.equal(mcpResponse.headers.get("x-middleware-next"), "1");
-        const adminResponse = await proxy(new NextRequest("https://studio.example.com/api/admin/connections"));
-        assert.equal(adminResponse.status, 401);
-        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { Authorization: "Bearer bearer-token" } })), "bearer-token");
-        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "X-MCP-Token": "dedicated-token", Authorization: "Bearer oauth-token" } })), "dedicated-token");
-        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "Ocp-Apim-Subscription-Key": "approved-token", "X-MCP-Token": "dedicated-token" } })), "approved-token");
-        const publicUrl = signedMediaUrl(
-            new NextRequest("http://0.0.0.0:3000/api/mcp/test"),
-            { id: "server-id", name: "Test", description: "", enabled: true, connectionId: id, imageModelIds: [], videoModelIds: [], tokenHash: "a".repeat(64), createdAt: "", updatedAt: "" },
-            "task-id", 0,
-        );
-        assert.equal(new URL(publicUrl).origin, "https://studio.example.com");
-        process.env.OPEN_HIGGSFIELD_APP_ORIGIN = "http://localhost:3000";
+        const previousOrigin = process.env.OPEN_HIGGSFIELD_APP_ORIGIN;
+        try {
+            process.env.OPEN_HIGGSFIELD_APP_ORIGIN = "https://studio.example.com";
+            const proxy = (await import("../src/proxy")).default;
+            const { bearerToken, imagePreviewContent, signedMediaUrl } = await import("../src/lib/mcp-runtime");
+            const mcpResponse = await proxy(new NextRequest("https://studio.example.com/api/mcp/00000000-0000-4000-8000-000000000000", { method: "POST" }));
+            assert.equal(mcpResponse.headers.get("x-middleware-next"), "1");
+            const adminResponse = await proxy(new NextRequest("https://studio.example.com/api/admin/connections"));
+            assert.equal(adminResponse.status, 401);
+            assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { Authorization: "Bearer bearer-token" } })), "bearer-token");
+            assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "X-MCP-Token": "dedicated-token", Authorization: "Bearer oauth-token" } })), "dedicated-token");
+            assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "Ocp-Apim-Subscription-Key": "approved-token", "X-MCP-Token": "dedicated-token" } })), "approved-token");
+            const publicUrl = signedMediaUrl(
+                new NextRequest("http://0.0.0.0:3000/api/mcp/test"),
+                { id: "server-id", name: "Test", description: "", enabled: true, connectionId: id, imageModelIds: [], videoModelIds: [], tokenHash: "a".repeat(64), createdAt: "", updatedAt: "" },
+                "task-id", 0,
+            );
+            assert.equal(new URL(publicUrl).origin, "https://studio.example.com");
+            const previewFile = path.join(directory, "mcp-preview.svg");
+            await fs.writeFile(previewFile, '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>');
+            const previews = await imagePreviewContent([previewFile]);
+            assert.equal(previews.length, 1);
+            assert.equal(previews[0].type, "image");
+            assert.equal(previews[0].mimeType, "image/webp");
+        } finally {
+            if (previousOrigin === undefined) delete process.env.OPEN_HIGGSFIELD_APP_ORIGIN;
+            else process.env.OPEN_HIGGSFIELD_APP_ORIGIN = previousOrigin;
+        }
     });
     await t.test("development accepts only matching loopback Host origins despite internal bind address", () => {
         const previousMode = process.env.NODE_ENV;

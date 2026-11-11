@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateMcpServer, touchMcpServer, type McpServerConfig } from "@/lib/mcp-server-store";
-import { bearerToken, signedMediaUrl, taskBelongsToServer, taskMediaPaths } from "@/lib/mcp-runtime";
+import { bearerToken, imagePreviewContent, signedMediaUrl, taskBelongsToServer, taskMediaPaths } from "@/lib/mcp-runtime";
 import { findCapability } from "@/providers/catalog";
 import { submitGeneration } from "@/lib/generation-service";
 import { getTask, initStore } from "@/lib/task-store";
@@ -135,10 +135,14 @@ async function getGeneration(req: NextRequest, server: McpServerConfig, raw: unk
     const task = getTask(parsed.data.task_id);
     if (!task || !taskBelongsToServer(task, server.id)) return textResult("Generación no encontrada en este MCP.", true);
     const status = task.status ?? task.freepik_status ?? "IN_PROGRESS";
-    const files = status === "COMPLETED"
-        ? taskMediaPaths(task).map((_, index) => signedMediaUrl(req, server, task.task_id, index))
-        : [];
-    return textResult({ task_id: task.task_id, media_type: task.media_type, status: status.toLowerCase(), files, error: task.error_message });
+    const paths = status === "COMPLETED" ? taskMediaPaths(task) : [];
+    const files = paths.map((_, index) => signedMediaUrl(req, server, task.task_id, index));
+    const summary = { task_id: task.task_id, media_type: task.media_type, status: status.toLowerCase(), files, error: task.error_message };
+    if (status === "COMPLETED" && task.media_type === "image") {
+        const previews = await imagePreviewContent(paths);
+        if (previews.length) return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }, ...previews] };
+    }
+    return textResult(summary);
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ serverId: string }> }) {

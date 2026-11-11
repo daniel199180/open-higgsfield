@@ -1,6 +1,8 @@
 import "server-only";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import type { NextRequest } from "next/server";
 import type { McpServerConfig } from "@/lib/mcp-server-store";
 import type { AnyTask } from "@/types";
@@ -39,6 +41,22 @@ export function verifyMediaSignature(server: McpServerConfig, taskId: string, in
 export function taskMediaPaths(task: AnyTask): string[] {
     if (task.media_type === "image") return task.result_paths ?? [];
     return task.video_path ? [task.video_path] : [];
+}
+
+export async function imagePreviewContent(paths: string[]): Promise<Array<{ type: "image"; data: string; mimeType: "image/webp" }>> {
+    const previews: Array<{ type: "image"; data: string; mimeType: "image/webp" }> = [];
+    for (const file of paths.slice(0, 4)) {
+        try {
+            const source = await fs.readFile(file);
+            const preview = await sharp(source)
+                .rotate()
+                .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+                .webp({ quality: 85 })
+                .toBuffer();
+            previews.push({ type: "image", data: preview.toString("base64"), mimeType: "image/webp" });
+        } catch { /* Keep the signed full-resolution link when a preview cannot be encoded. */ }
+    }
+    return previews;
 }
 
 export function safeDownloadName(task: AnyTask, file: string): string {

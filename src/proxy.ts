@@ -8,9 +8,13 @@ export default async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname;
     if (pathname.startsWith("/api/")) {
         try {
+            // Public MCP transport routes authenticate with their own bearer token
+            // or an expiring media signature. The admin session must not intercept
+            // them before the route-specific checks run.
+            const mcpTransport = pathname.startsWith("/api/mcp/");
             const signedProviderInput = (request.method === "GET" || request.method === "HEAD") &&
                 /^\/api\/provider-input\/[0-9a-f-]{36}\.(?:jpg|png|webp|mp4|webm|mov|mp3|wav|m4a)$/i.test(pathname);
-            if (pathname !== "/api/health" && !signedProviderInput) {
+            if (pathname !== "/api/health" && !signedProviderInput && !mcpTransport) {
                 const denied = pathname === "/api/admin/auth" ? checkOrigin(request) : await authorizeRequest(request);
                 if (denied) { denied.headers.set("Cache-Control", "no-store"); return denied; }
             }

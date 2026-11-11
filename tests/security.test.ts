@@ -112,6 +112,13 @@ test("single-admin setup, encrypted connections and security boundaries", async 
         assert.equal(checkOrigin(request())?.status, 403);
         await assert.rejects(readJsonBody(new Request("https://example.com", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: "a".repeat(17000) }) })), /ERR_BODY_TOO_LARGE/);
     });
+    await t.test("MCP transport reaches its bearer authentication without an admin session", async () => {
+        const proxy = (await import("../src/proxy")).default;
+        const mcpResponse = await proxy(new NextRequest("https://studio.example.com/api/mcp/00000000-0000-4000-8000-000000000000", { method: "POST" }));
+        assert.equal(mcpResponse.headers.get("x-middleware-next"), "1");
+        const adminResponse = await proxy(new NextRequest("https://studio.example.com/api/admin/connections"));
+        assert.equal(adminResponse.status, 401);
+    });
     await t.test("development accepts only matching loopback Host origins despite internal bind address", () => {
         const previousMode = process.env.NODE_ENV;
         const previousOrigin = process.env.OPEN_HIGGSFIELD_APP_ORIGIN;

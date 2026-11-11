@@ -6,6 +6,8 @@ import type { McpServerConfig } from "@/lib/mcp-server-store";
 import type { AnyTask } from "@/types";
 
 export function bearerToken(req: NextRequest): string {
+    const dedicatedToken = req.headers.get("x-mcp-token")?.trim() ?? "";
+    if (dedicatedToken) return dedicatedToken;
     const authorization = req.headers.get("authorization") ?? "";
     return authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
 }

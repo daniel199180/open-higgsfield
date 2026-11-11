@@ -114,10 +114,13 @@ test("single-admin setup, encrypted connections and security boundaries", async 
     });
     await t.test("MCP transport reaches its bearer authentication without an admin session", async () => {
         const proxy = (await import("../src/proxy")).default;
+        const { bearerToken } = await import("../src/lib/mcp-runtime");
         const mcpResponse = await proxy(new NextRequest("https://studio.example.com/api/mcp/00000000-0000-4000-8000-000000000000", { method: "POST" }));
         assert.equal(mcpResponse.headers.get("x-middleware-next"), "1");
         const adminResponse = await proxy(new NextRequest("https://studio.example.com/api/admin/connections"));
         assert.equal(adminResponse.status, 401);
+        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { Authorization: "Bearer bearer-token" } })), "bearer-token");
+        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "X-MCP-Token": "dedicated-token", Authorization: "Bearer oauth-token" } })), "dedicated-token");
     });
     await t.test("development accepts only matching loopback Host origins despite internal bind address", () => {
         const previousMode = process.env.NODE_ENV;

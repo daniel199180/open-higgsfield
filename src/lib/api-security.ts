@@ -36,6 +36,11 @@ export function securityError(error: unknown): NextResponse {
         ERR_PUBLIC_REFERENCE_ORIGIN_REQUIRED: [503, "Este modelo necesita una URL HTTPS pública para leer archivos de referencia. Configura OPEN_HIGGSFIELD_APP_ORIGIN con el dominio accesible del servicio o usa un modelo que admita archivos directos."],
         ERR_LEGACY_VAULT_KEY_REQUIRED: [503, "Hace falta la clave original para migrar las conexiones existentes. No se han modificado."],
         ERR_VAULT_KEY_MISSING: [503, "Falta la clave de cifrado. Restaura la copia de seguridad del servidor."],
+        ERR_MCP_SERVER_NOT_FOUND: [404, "El MCP ya no existe."],
+        ERR_MCP_MODELS_REQUIRED: [400, "Selecciona al menos un modelo de imagen o video."],
+        ERR_MCP_MODELS_INVALID: [400, "Uno de los modelos seleccionados no pertenece a la API elegida o ya no está disponible."],
+        ERR_MCP_CONNECTION_INVALID: [400, "La conexión de API elegida no existe o está desactivada."],
+        ERR_MCP_STORE_INVALID: [503, "No se pudo leer la configuración de MCPs."],
     };
     const [status, message] = allowed[code] ?? [500, "No se pudo completar la operación. Verifica la configuración del servicio."];
     return NextResponse.json({ error: message }, { status, headers: { "Cache-Control": "no-store" } });

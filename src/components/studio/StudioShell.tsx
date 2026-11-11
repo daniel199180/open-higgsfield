@@ -18,6 +18,7 @@ import { AdminAccess } from "./AdminAccess";
 import { StudioNavigation } from "./StudioNavigation";
 import { UsagePanel } from "./UsagePanel";
 import { TextChatStudio } from "./TextChatStudio";
+import { McpServersPanel } from "./McpServersPanel";
 
 const WorkflowStudio = dynamic(() => import("@/components/workflows/WorkflowStudio").then(module => module.WorkflowStudio), { ssr: false });
 const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").then(module => module.SocialStudio), { ssr: false });
@@ -25,13 +26,13 @@ const SocialStudio = dynamic(() => import("@/components/social/SocialStudio").th
 export function StudioShell() {
   const [mode, setMode] = useState<StudioMode>("image");
   const [usageOpen, setUsageOpen] = useState(false);
-  const [workspace, setWorkspace] = useState<"studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis">("studio");
+  const [workspace, setWorkspace] = useState<"studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis" | "mcps">("studio");
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const beforeLeaveWorkflow = useRef<(() => Promise<boolean>) | null>(null);
   const beforeLeaveEditor = useRef<(() => Promise<boolean>) | null>(null);
   const registerEditorGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveEditor.current = guard; }, []);
   const registerWorkflowGuard = useCallback((guard: (() => Promise<boolean>) | null) => { beforeLeaveWorkflow.current = guard; }, []);
-  const navigateWorkspace = useCallback((next: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis") => {
+  const navigateWorkspace = useCallback((next: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis" | "mcps") => {
     window.scrollTo(0, 0);
     setWorkspace(next);
     const url = new URL(window.location.href);
@@ -40,7 +41,7 @@ export function StudioShell() {
     if (next !== "workflows") { url.searchParams.delete("workflow"); url.searchParams.delete("run"); }
     window.history.replaceState(null, "", url);
   }, []);
-  const selectNavigation = useCallback(async (destination: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "usage" | "apis") => {
+  const selectNavigation = useCallback(async (destination: "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "usage" | "apis" | "mcps") => {
     if (destination === "usage") { setUsageOpen(true); return; }
     if (destination === workspace) return;
     if (workspace === "workflows" && beforeLeaveWorkflow.current && !await beforeLeaveWorkflow.current()) return;
@@ -75,7 +76,7 @@ export function StudioShell() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const requestedWorkspace = new URLSearchParams(window.location.search).get("workspace");
-      if (requestedWorkspace === "chat" || requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "prompts" || requestedWorkspace === "apis") setWorkspace(requestedWorkspace);
+      if (requestedWorkspace === "chat" || requestedWorkspace === "workflows" || requestedWorkspace === "social" || requestedWorkspace === "editor" || requestedWorkspace === "characters" || requestedWorkspace === "companies" || requestedWorkspace === "prompts" || requestedWorkspace === "apis" || requestedWorkspace === "mcps") setWorkspace(requestedWorkspace);
       const requestedMode = new URLSearchParams(window.location.search).get("mode");
       if (requestedMode === "carousel" || requestedMode === "logo" || requestedMode === "audio") setMode(requestedMode);
       void checkSession();
@@ -139,7 +140,7 @@ export function StudioShell() {
 
   if (!authenticated) return <main className="grid min-h-screen place-items-center bg-black p-4 text-white">{authenticated === null ? <p>Comprobando acceso…</p> : <AdminAccess onReady={() => setAuthenticated(true)} />}</main>;
 
-  const viewportWorkspace = workspace === "studio" || workspace === "chat" || workspace === "workflows" || workspace === "social" || workspace === "editor" || workspace === "apis";
+  const viewportWorkspace = workspace === "studio" || workspace === "chat" || workspace === "workflows" || workspace === "social" || workspace === "editor" || workspace === "apis" || workspace === "mcps";
 
   return (
     <div className={viewportWorkspace ? "relative h-dvh overflow-hidden bg-black" : "relative min-h-dvh bg-black"}>
@@ -150,6 +151,7 @@ export function StudioShell() {
         workspace === "prompts" ? <PromptLibraryStudio onBack={() => navigateWorkspace("studio")} /> :
         workspace === "editor" ? <ImageEditingStudio onBack={() => navigateWorkspace("studio")} registerBeforeLeave={registerEditorGuard} /> :
         workspace === "apis" ? <AdminConnectionsPanel onBack={() => navigateWorkspace("studio")} /> :
+        workspace === "mcps" ? <McpServersPanel onBack={() => navigateWorkspace("studio")} /> :
           <div className="relative h-dvh overflow-hidden">
             {mode === "audio" ? <AudioStudio onModeChange={changeMode} /> : <>
               {mode === "logo" ? <LogoResults /> : mode === "carousel" ? <CarouselResults /> : <ResultsGrid mode={mode} />}

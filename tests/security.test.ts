@@ -47,6 +47,21 @@ test("single-admin setup, encrypted connections and security boundaries", async 
         assert.equal((await store.getStoredConnection(id))?.credentials.apiKey, apiKey);
         assert.equal((await fs.stat(path.join(directory, "provider-connections.enc.json"))).mode & 0o777, 0o600);
     });
+    await t.test("MCP servers isolate tokens and only reveal a credential when issued", async () => {
+        const mcp = await import("../src/lib/mcp-server-store");
+        const created = await mcp.createMcpServer({ name: "Contenido", description: "Prueba", enabled: true, connectionId: id, imageModelIds: ["image-model"], videoModelIds: [] });
+        assert.match(created.token, /^ohf_mcp_/);
+        assert.equal(await mcp.authenticateMcpServer(created.server.id, created.token).then(Boolean), true);
+        assert.equal(await mcp.authenticateMcpServer(created.server.id, `${created.token}x`), undefined);
+        assert.equal(JSON.stringify(await mcp.listMcpServers()).includes(created.token), false);
+        assert.equal((await fs.readFile(path.join(directory, ".higgsfield-security/mcp-servers.json"), "utf8")).includes(created.token), false);
+        const rotated = await mcp.updateMcpServer(created.server.id, { name: "Contenido", description: "Prueba", enabled: true, connectionId: id, imageModelIds: ["image-model"], videoModelIds: [], rotateToken: true });
+        assert.ok(rotated.token);
+        assert.equal(await mcp.authenticateMcpServer(created.server.id, created.token), undefined);
+        assert.equal(await mcp.authenticateMcpServer(created.server.id, rotated.token!).then(Boolean), true);
+        await mcp.deleteMcpServer(created.server.id);
+        assert.equal(await mcp.authenticateMcpServer(created.server.id, rotated.token!), undefined);
+    });
     await t.test("connections cannot cross providers or silently fall back after deletion", async () => {
         await assert.rejects(store.getConnectionForProvider("higgsfield", id), /ERR_CONNECTION_NOT_FOUND/);
         await assert.rejects(store.upsertProviderConnection({ id, provider: "higgsfield", name: "changed", credentials: {} }), /ERR_CONNECTION_PROVIDER_MISMATCH/);

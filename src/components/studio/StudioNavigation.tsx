@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, CircleDollarSign, Folder, House, Images, Menu, Palette, Settings2, UserRound, WandSparkles, Workflow, X } from "lucide-react";
+import { Bot, CircleDollarSign, Folder, House, Images, Menu, Palette, PlugZap, Settings2, UserRound, WandSparkles, Workflow, X } from "lucide-react";
 
-type Workspace = "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis";
+type Workspace = "studio" | "chat" | "workflows" | "social" | "editor" | "characters" | "companies" | "prompts" | "apis" | "mcps";
 type Destination = Workspace | "usage";
 
 export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace; onSelect: (destination: Destination) => void }) {
@@ -46,6 +46,7 @@ export function StudioNavigation({ workspace, onSelect }: { workspace: Workspace
     { id: "companies" as const, label: "Empresas", description: "Carpetas y biblioteca de generaciones", icon: Folder },
     { id: "usage" as const, label: "Consumo", description: "Tokens, solicitudes y dólares", icon: CircleDollarSign },
     { id: "apis" as const, label: "APIs", description: "Conexiones y credenciales", icon: Settings2 },
+    { id: "mcps" as const, label: "Servidores MCP", description: "Endpoints para imagen y video", icon: PlugZap },
     { id: "workflows" as const, label: "Workflows", description: "Procesos creativos", icon: Workflow },
     { id: "social" as const, label: "Sistemas de diseño", description: "Marcas y proyectos guardados", icon: Palette },
     { id: "characters" as const, label: "Personajes", description: "Identidades visuales reutilizables", icon: UserRound },

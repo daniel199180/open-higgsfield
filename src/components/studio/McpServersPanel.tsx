@@ -118,7 +118,7 @@ export function McpServersPanel({ onBack }: { onBack: () => void }) {
         await navigator.clipboard.writeText(value); setCopied(label); window.setTimeout(() => setCopied(""), 1800);
     }
     const endpoint = issued && typeof window !== "undefined" ? `${window.location.origin}/api/mcp/${issued.id}` : "";
-    const configSnippet = issued ? JSON.stringify({ url: endpoint, headers: { "X-MCP-Token": issued.token } }, null, 2) : "";
+    const configSnippet = issued ? JSON.stringify({ url: endpoint, headers: { "ocp-apim-subscription-key": issued.token } }, null, 2) : "";
 
     return <main className="h-dvh overflow-y-auto bg-[#070707] px-4 py-6 text-white sm:px-7">
         <section className="mx-auto max-w-7xl pb-16">

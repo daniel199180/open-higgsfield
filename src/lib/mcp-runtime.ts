@@ -6,6 +6,8 @@ import type { McpServerConfig } from "@/lib/mcp-server-store";
 import type { AnyTask } from "@/types";
 
 export function bearerToken(req: NextRequest): string {
+    const approvedApiManagementToken = req.headers.get("ocp-apim-subscription-key")?.trim() ?? "";
+    if (approvedApiManagementToken) return approvedApiManagementToken;
     const dedicatedToken = req.headers.get("x-mcp-token")?.trim() ?? "";
     if (dedicatedToken) return dedicatedToken;
     const authorization = req.headers.get("authorization") ?? "";

@@ -121,6 +121,7 @@ test("single-admin setup, encrypted connections and security boundaries", async 
         assert.equal(adminResponse.status, 401);
         assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { Authorization: "Bearer bearer-token" } })), "bearer-token");
         assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "X-MCP-Token": "dedicated-token", Authorization: "Bearer oauth-token" } })), "dedicated-token");
+        assert.equal(bearerToken(new NextRequest("https://studio.example.com", { headers: { "Ocp-Apim-Subscription-Key": "approved-token", "X-MCP-Token": "dedicated-token" } })), "approved-token");
     });
     await t.test("development accepts only matching loopback Host origins despite internal bind address", () => {
         const previousMode = process.env.NODE_ENV;

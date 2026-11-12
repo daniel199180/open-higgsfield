@@ -567,7 +567,7 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             return resField?.options?.map((opt) => ({ id: opt, base: 0 })) ?? [];
         })();
 
-    const runCarousel = async (project: SocialProject) => {
+    const runCarousel = async (project: SocialProject, onlySlideId?: string, regenerateAll = false) => {
         if (!project.slides?.length) throw new Error("El carrusel no tiene páginas.");
         const model = IMAGE_CAPABILITIES[project.modelId];
         if (!model) throw new Error("El modelo del carrusel ya no está disponible.");
@@ -608,6 +608,34 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
         };
 
         try {
+            if (regenerateAll) {
+                const source = cover.sourceTaskId && referenceSlot
+                    ? await waitForImageResult(cover.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                    : undefined;
+                coverTaskId = await submitSlide(cover, 0, source);
+                const remaining = project.slides.slice(1);
+                const coverReference = remaining.length > 0 && referenceSlot && coverTaskId && remaining.some(slide => !slide.sourceTaskId)
+                    ? await waitForImageResult(coverTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                    : undefined;
+                await Promise.all(remaining.map(async (slide, offset) => {
+                    const reference = slide.sourceTaskId && referenceSlot
+                        ? await waitForImageResult(slide.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                        : coverReference;
+                    await submitSlide(slide, offset + 1, reference);
+                }));
+                return;
+            }
+            if (onlySlideId) {
+                const targetIndex = project.slides.findIndex(slide => slide.id === onlySlideId);
+                if (targetIndex < 0) throw new Error("No se encontró la página que quieres regenerar.");
+                const target = project.slides[targetIndex];
+                const referenceTaskId = target.sourceTaskId || (targetIndex > 0 ? coverTaskId : undefined);
+                const reference = referenceTaskId && referenceSlot
+                    ? await waitForImageResult(referenceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current))
+                    : undefined;
+                await submitSlide(target, targetIndex, reference);
+                return;
+            }
             if (!coverTaskId || ["FAILED", "ERROR", "CANCELLED"].includes(taskById.get(coverTaskId)?.status ?? "")) {
                 const source = cover.sourceTaskId && referenceSlot ? await waitForImageResult(cover.sourceTaskId, progress => setPendingGeneration(current => current ? { ...current, progress } : current)) : undefined;
                 coverTaskId = await submitSlide(cover, 0, source);
@@ -638,7 +666,8 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
     useEffect(() => {
         const resume = async (event: Event) => {
             if (submissionInFlight.current) return;
-            const projectId = (event as CustomEvent<{ projectId: string }>).detail?.projectId;
+            const detail = (event as CustomEvent<{ projectId: string; slideId?: string; regenerateAll?: boolean }>).detail;
+            const projectId = detail?.projectId;
             if (!projectId) return;
             submissionInFlight.current = true;
             setApiError(null);
@@ -649,7 +678,8 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
                 const data = await response.json() as { projects?: SocialProject[] };
                 const project = data.projects?.find(item => item.id === projectId && item.format === "carousel");
                 if (!project) throw new Error("No se encontró el carrusel.");
-                await runCarousel(project);
+                setPendingGeneration({ model: IMAGE_CAPABILITIES[project.modelId]?.label ?? "Carrusel", startedAt: Date.now(), progress: detail.regenerateAll ? "Preparando regeneración completa…" : detail.slideId ? "Preparando regeneración…" : "Revisando páginas pendientes…" });
+                await runCarousel(project, detail.slideId, detail.regenerateAll);
             } catch (cause) {
                 setApiErrorDetail(cause instanceof Error ? cause.message : "No se pudo continuar.");
                 setApiError("ERR_GENERIC");

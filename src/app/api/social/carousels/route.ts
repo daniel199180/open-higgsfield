@@ -26,6 +26,7 @@ const ratioSchema = z.string().regex(/^\d{1,2}:\d{1,2}$/).refine(value => {
 const commandSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("create"), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), brandId: z.uuid(), companyId: z.uuid().optional(), characterId: z.uuid().optional(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slideCount: z.number().int().min(2).max(10), slidePrompts: z.array(z.string().trim().max(2000)).max(10).optional(), language: z.enum(["Español", "Português (Brasil)", "English"]), autoStory: z.boolean().optional(), fieldValues: z.record(z.string().max(80), z.union([z.string().max(200), z.number(), z.boolean()])).optional() }).strict(),
     z.object({ action: z.literal("save"), id: z.uuid(), name: z.string().trim().min(1).max(100), brief: z.string().trim().min(5).max(2000), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30), slides: z.array(slideSchema).min(2).max(10) }).strict(),
+    z.object({ action: z.literal("configure"), id: z.uuid(), modelId: z.string().min(1).max(500), resolution: z.string().max(30) }).strict(),
     z.object({ action: z.literal("variant"), sourceId: z.uuid(), modelId: z.string().min(1).max(500), aspectRatio: ratioSchema, resolution: z.string().max(30) }).strict(),
 ]);
 
@@ -45,6 +46,26 @@ export async function POST(req: NextRequest) {
     try {
         if (!req.headers.get("content-type")?.startsWith("application/json")) throw new WorkflowError("Envía JSON.", 400);
         const input = commandSchema.parse(JSON.parse(Buffer.from(await readLimitedBody(req, 32 * 1024)).toString("utf8")));
+        const store = workflowStore();
+        if (input.action === "configure") {
+            const previous = await store.read<SocialProject>(`social:${input.id}`);
+            if (!previous?.slides || previous.format !== "carousel") throw new WorkflowError("No se encontró el carrusel.", 404);
+            await checkModel(input.modelId, previous.aspectRatio ?? "", input.resolution);
+            const selectedModel = await findCapability("image", input.modelId) as ImageModelCapability;
+            const brand = await store.read<BrandSystem>(`brand:${previous.brandId}`);
+            if (!brand) throw new WorkflowError("El sistema de diseño ya no está disponible.", 409);
+            const fieldValues = previous.modelId === input.modelId ? previous.fieldValues : {};
+            const candidate: SocialProject = { ...previous, modelId: input.modelId, resolution: input.resolution, fieldValues };
+            validateCarouselProject(candidate, brand, selectedModel);
+            const configured = await store.transaction(docs => {
+                const current = docs.get(`social:${input.id}`) as SocialProject | undefined;
+                if (!current?.slides || current.format !== "carousel") throw new WorkflowError("No se encontró el carrusel.", 404);
+                const next: SocialProject = { ...current, modelId: input.modelId, resolution: input.resolution, fieldValues: current.modelId === input.modelId ? current.fieldValues : {}, updatedAt: Date.now() };
+                docs.set(`social:${input.id}`, next);
+                return next;
+            });
+            return NextResponse.json({ project: configured }, { headers: { "Cache-Control": "no-store" } });
+        }
         if (input.action === "create") await requireCompany(input.companyId);
         await checkModel(input.modelId, input.aspectRatio, input.resolution);
         const selectedModel = await findCapability("image", input.modelId) as ImageModelCapability;
@@ -53,7 +74,6 @@ export async function POST(req: NextRequest) {
             if (!model.media_slots.some(slot => slot.kind === "image" && !slot.required) && !getEditVariant(model)?.slots.some(slot => slot.kind === "image")) throw new WorkflowError("Para adaptar el mismo carrusel, el modelo debe admitir una imagen de referencia.", 400);
             await initStore();
         }
-        const store = workflowStore();
         const saved = await store.transaction(docs => {
             const now = Date.now();
             if (input.action === "variant") {

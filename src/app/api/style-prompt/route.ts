@@ -3,6 +3,7 @@ import sharp from "sharp";
 import { authorizeRequest, limitRequest } from "@/lib/api-security";
 import { getConnectionForProvider } from "@/lib/connection-store";
 import { providerFetch } from "@/providers/secure-fetch";
+import { withOrthographyReview } from "@/lib/prompt-quality";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,13 +31,13 @@ async function localAnalysis(buffer: Buffer): Promise<AnalysisResult> {
     const orientation = (metadata.width ?? 1) > (metadata.height ?? 1) ? "horizontal" : (metadata.width ?? 1) < (metadata.height ?? 1) ? "vertical" : "cuadrada";
     const mood = average < 70 ? "oscura y dramática" : average > 185 ? "luminosa y aireada" : "equilibrada, con contraste medio";
     const dominant = `#${hex(rgb[0] ?? 0)}${hex(rgb[1] ?? 0)}${hex(rgb[2] ?? 0)}`;
-    const prompt = [
+    const prompt = withOrthographyReview([
         "Recrear la imagen de referencia manteniendo su dirección de arte y composición.",
         `Estética ${mood}, formato ${orientation}, proporción visual ${metadata.width ?? "auto"}:${metadata.height ?? "auto"}.`,
         `Paleta principal aproximada ${dominant}; conservar la temperatura de color, el contraste y la relación entre luces y sombras.`,
         "Describir y preservar el sujeto principal, la profundidad, la perspectiva, la textura, el encuadre y el lenguaje fotográfico o ilustrativo de la referencia.",
         "Resultado de alta calidad, detalles limpios, composición intencional y sin elementos aleatorios.",
-    ].join(" ");
+    ].join(" "), 12000);
     return {
         title: "Estilo extraído de la imagen",
         prompt,
@@ -80,7 +81,7 @@ async function visionAnalysis(buffer: Buffer): Promise<AnalysisResult | null> {
         if (typeof parsed.prompt !== "string" || !parsed.prompt.trim()) return null;
         return {
             title: typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim().slice(0, 120) : "Estilo extraído de la imagen",
-            prompt: parsed.prompt.trim().slice(0, 12000),
+            prompt: withOrthographyReview(parsed.prompt.trim().slice(0, 11700), 12000),
             negativePrompt: typeof parsed.negativePrompt === "string" ? parsed.negativePrompt.trim().slice(0, 4000) : "",
             tags: Array.isArray(parsed.tags) ? parsed.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 20) : [],
             palette: Array.isArray(parsed.palette) ? parsed.palette.filter((color): color is string => typeof color === "string").slice(0, 12) : [],

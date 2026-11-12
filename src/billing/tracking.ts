@@ -4,9 +4,14 @@ import { getConnectionForProvider } from "@/lib/connection-store";
 import { billingStore } from "./store";
 import { imageQuote } from "./pricing";
 import { UsageReportedError } from "./usage";
+import { withOrthographyReview } from "@/lib/prompt-quality";
 
 /** Durable intent before a billable call; costs survive failed downloads and gallery deletion. */
 export async function trackedSubmit(id: string, source: "studio" | "workflow", provider: GenerationProvider, request: ProviderGenerationRequest): Promise<ProviderSubmission> {
+    const preparedRequest: ProviderGenerationRequest = {
+        ...request,
+        params: { ...request.params, prompt: withOrthographyReview(request.params.prompt, request.capabilities.prompt_max) },
+    };
     const connection = ["openrouter", "openai", "higgsfield", "api-market", "apimart"].includes(provider.id)
         ? await getConnectionForProvider(provider.id, request.connectionId) : undefined;
     const connectionId = connection?.id ?? request.connectionId ?? "environment";
@@ -18,7 +23,7 @@ export async function trackedSubmit(id: string, source: "studio" | "workflow", p
     await billingStore().begin({ id, source, provider: provider.id, connection: connectionId, model: request.providerModelId, label: request.capabilities.label, media: request.mediaType, created: new Date().toISOString(), status: "SUBMITTING",
         estimateMin: quote?.minUsd === undefined ? undefined : quote.minUsd * n, estimateMax: quote?.maxUsd === undefined ? undefined : quote.maxUsd * n });
     try {
-        const result = await provider.submit({ ...request, connectionId: connection?.id ?? request.connectionId });
+        const result = await provider.submit({ ...preparedRequest, connectionId: connection?.id ?? request.connectionId });
         await billingStore().update(id, result.status, result.usage);
         return result;
     } catch (error) {

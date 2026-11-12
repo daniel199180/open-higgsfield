@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { BrandSystem } from "./types";
 import { brandPalettePrompt } from "./brand";
+import { withOrthographyReview } from "@/lib/prompt-quality";
 
 export const logoCommand = z.discriminatedUnion("mode", [
     z.object({ mode: z.literal("trace"), brandId: z.uuid().optional(), companyId: z.uuid().optional(), sourceAssetId: z.uuid(), colors: z.number().int().min(2).max(24).default(8) }).strict(),
@@ -8,10 +9,10 @@ export const logoCommand = z.discriminatedUnion("mode", [
 ]);
 
 export function buildLogoPrompt(input: { mode: "create" | "redraw"; prompt: string }, brand?: BrandSystem): string {
-    return [
+    return withOrthographyReview([
         input.prompt,
         brand ? `Brand: ${brand.name}. ${brandPalettePrompt(brand)} Visual rules: ${brand.visualRules}.` : "",
         "Create a clean, scalable vector logo with legible shapes and no photographic textures.",
         input.mode === "redraw" ? "Reinterpret the attached logo as vector art; preserve its recognizable identity, but do not claim exact tracing." : "",
-    ].filter(Boolean).join("\n");
+    ].filter(Boolean).join("\n"));
 }

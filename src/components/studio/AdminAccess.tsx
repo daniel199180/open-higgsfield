@@ -24,8 +24,8 @@ function SecretField({ label, ariaLabel, value, onChange, minLength, maxLength, 
     </div>;
 }
 
-export function AdminAccess({ onReady, changePassword = false }: { onReady: () => void; changePassword?: boolean }) {
-    const [configured, setConfigured] = useState<boolean | null>(changePassword ? true : null);
+export function AdminAccess({ onReady, changePassword = false, initialConfigured }: { onReady: () => void; changePassword?: boolean; initialConfigured?: boolean }) {
+    const [configured, setConfigured] = useState<boolean | null>(changePassword ? true : initialConfigured ?? null);
     const [recover, setRecover] = useState(false);
     const [password, setPassword] = useState("");
     const [confirmation, setConfirmation] = useState("");
@@ -36,7 +36,7 @@ export function AdminAccess({ onReady, changePassword = false }: { onReady: () =
     const action = changePassword ? "password" : !configured ? "setup" : recover ? "recover" : "login";
     const creating = action !== "login";
     useEffect(() => {
-        if (changePassword) return;
+        if (changePassword || initialConfigured !== undefined) return;
         let active = true;
         fetch("/api/admin/auth", { cache: "no-store" }).then(async (response) => {
             const data = await response.json();
@@ -44,7 +44,7 @@ export function AdminAccess({ onReady, changePassword = false }: { onReady: () =
             if (active) setConfigured(data.configured);
         }).catch((error) => { if (active) setError(error.message); });
         return () => { active = false; };
-    }, [changePassword]);
+    }, [changePassword, initialConfigured]);
 
     async function submit(event: React.FormEvent) {
         event.preventDefault();

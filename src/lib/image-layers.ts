@@ -12,6 +12,7 @@ import type { ImageLayerMetadata, ImageLayerSet, ImageTask, TaskEvent } from "@/
 import { providerFetch } from "@/providers/secure-fetch";
 import { isLayerTask } from "@/lib/image-layer-task";
 import { STORAGE_ROOT } from "@/lib/storage-paths";
+import { withOrthographyReview } from "@/lib/prompt-quality";
 
 const MODEL = "seedream-5-0-pro";
 const MAX_POLL_MS = 240_000;
@@ -456,7 +457,7 @@ export async function decomposeImage(taskIdValue: string, index: number, prompt:
     await assertLayerDiskSpace();
     const connection = await getConnectionForProvider("apimart");
     if (!connection?.credentials.apiKey) throw new ImageLayerError("Conecta APIMart antes de separar imágenes en capas.", 400);
-    const payload = await requestJson("/v1/images/generations", connection, { method: "POST", body: JSON.stringify({ model: MODEL, prompt: prompt || undefined, image_urls: [`data:image/png;base64,${source.png.toString("base64")}`], layer_decomposition: true, size: ["auto", "1K", "1.5K", "2K"].includes(size) ? size : "auto", output_format: "png" }) });
+    const payload = await requestJson("/v1/images/generations", connection, { method: "POST", body: JSON.stringify({ model: MODEL, prompt: prompt ? withOrthographyReview(prompt, 3000) : undefined, image_urls: [`data:image/png;base64,${source.png.toString("base64")}`], layer_decomposition: true, size: ["auto", "1K", "1.5K", "2K"].includes(size) ? size : "auto", output_format: "png" }) });
     const providerTaskId = taskId(payload);
     const job = { sourceTaskId: taskIdValue, sourceIndex: index, createdAt: new Date().toISOString(), connectionId: connection.id, prompt };
     if (providerTaskId) await saveLayerJob(providerTaskId, job);
@@ -556,7 +557,8 @@ export async function editImageLayer(layerTaskId: string, layerIndex: number, pr
     const layerPath = parent.result_paths?.[layerIndex];
     if (!layerPath) throw new ImageLayerError("No se encontró el archivo de la capa.", 404);
     const layer = await fs.readFile(layerPath);
-    const payload = await requestJson("/v1/images/generations", connection, { method: "POST", body: JSON.stringify({ model: MODEL, prompt: `${prompt.trim()} Preserve transparency and keep the layer composition aligned to its original canvas.`, image_urls: [`data:image/png;base64,${layer.toString("base64")}`], background: "transparent", output_format: "png", size: "auto" }) });
+    const layerPrompt = withOrthographyReview(`${prompt.trim()} Preserve transparency and keep the layer composition aligned to its original canvas.`, 4000);
+    const payload = await requestJson("/v1/images/generations", connection, { method: "POST", body: JSON.stringify({ model: MODEL, prompt: layerPrompt, image_urls: [`data:image/png;base64,${layer.toString("base64")}`], background: "transparent", output_format: "png", size: "auto" }) });
     const providerTaskId = taskId(payload);
     const parsed = providerTaskId ? await poll(connection, providerTaskId, layerSet.sourceWidth, layerSet.sourceHeight) : parseLayerDecomposition(payload, layerSet.sourceWidth, layerSet.sourceHeight);
     if (!parsed?.urls[0]) throw new ImageLayerError("APIMart no devolvió la capa editada.", 502);

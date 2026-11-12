@@ -16,6 +16,8 @@ interface ResultsGridProps {
     mode: "video" | "image";
 }
 
+const HISTORY_PAGE_SIZE = 24;
+
 function formatFailureMessage(rawMessage: string | undefined, status: string | undefined): string {
     const raw = (rawMessage ?? "").trim();
     const normalized = raw.toLowerCase();
@@ -38,8 +40,9 @@ function formatFailureMessage(rawMessage: string | undefined, status: string | u
 
 export function ResultsGrid({ mode }: ResultsGridProps) {
     const t = useTranslations("tasks");
-    const { tasks: videoTasks } = useVideoTasks();
-    const { tasks: imageTasks } = useImageTasks();
+    const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE_SIZE);
+    const { tasks: videoTasks, hasMore: hasMoreVideos, isValidating: loadingVideos } = useVideoTasks(mode === "video", historyLimit);
+    const { tasks: imageTasks, hasMore: hasMoreImages, isValidating: loadingImages } = useImageTasks(mode === "image", historyLimit, true);
     const [lightbox, setLightbox] = useState<{ images: string[]; index: number; modelId?: string; prompt?: string; mediaType?: "image" | "video"; sourceTaskId?: string } | null>(null);
 
     const handleDeleteVideo = useCallback(async (id: string) => {
@@ -85,6 +88,8 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
 
     const tasks = mode === "video" ? videoTasks : imageTasks.filter((task) => !isLayerTask(task) && !task.reuse_state?.editor_internal);
     const isEmpty = tasks.length === 0;
+    const hasMore = mode === "video" ? hasMoreVideos : hasMoreImages;
+    const loadingMore = mode === "video" ? loadingVideos : loadingImages;
 
     return (
         <div className="h-full overflow-y-auto" style={{ paddingBottom: 296 }}>
@@ -129,6 +134,11 @@ export function ResultsGrid({ mode }: ResultsGridProps) {
                                 ))}
                         </AnimatePresence>
                     </div>
+                    {hasMore && <div className="flex justify-center pt-7">
+                        <button type="button" disabled={loadingMore} onClick={() => setHistoryLimit((current) => current + HISTORY_PAGE_SIZE)} className="rounded-xl border border-white/15 bg-white/[.04] px-5 py-2.5 text-sm font-semibold text-white/75 transition hover:border-[#ff4d4d]/60 hover:text-white disabled:cursor-wait disabled:opacity-50">
+                            {loadingMore ? "Cargando…" : "Cargar más"}
+                        </button>
+                    </div>}
                 </div>
             )}
 

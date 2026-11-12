@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { VIDEO_CAPABILITIES } from "@/models/capabilities/video";
 import { IMAGE_CAPABILITIES } from "@/models/capabilities/image";
+import type { ImageModelCapability } from "@/models/capabilities/image";
 import { getEditVariant, getImageAspectRatios, requiresImageAspectRatio } from "@/models/capabilities/image-helpers";
 import { getVideoOverrides, getDurations, getAspectRatios, getResolutionVariants, hasAttachments as videoHasAttachments } from "@/models/capabilities/video-helpers";
 import type { AttachmentRole } from "@/models/capabilities/video-helpers";
@@ -567,9 +568,9 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             return resField?.options?.map((opt) => ({ id: opt, base: 0 })) ?? [];
         })();
 
-    const runCarousel = async (project: SocialProject, onlySlideId?: string, regenerateAll = false) => {
+    const runCarousel = async (project: SocialProject, onlySlideId?: string, regenerateAll = false, resolvedModel?: ImageModelCapability) => {
         if (!project.slides?.length) throw new Error("El carrusel no tiene páginas.");
-        const model = IMAGE_CAPABILITIES[project.modelId];
+        const model = resolvedModel ?? IMAGE_CAPABILITIES[project.modelId];
         if (!model) throw new Error("El modelo del carrusel ya no está disponible.");
         const referenceSlot = model.media_slots.find(slot => slot.kind === "image" && !slot.required)
             ?? getEditVariant(model)?.slots.find(slot => slot.kind === "image");
@@ -673,13 +674,20 @@ function MediaCommandBar({ mode, onModeChange }: CommandBarProps & { mode: "vide
             setApiError(null);
             setPendingGeneration({ model: "Carrusel", startedAt: Date.now(), progress: "Revisando páginas pendientes…" });
             try {
-                const response = await fetch("/api/social", { cache: "no-store" });
+                const [response, catalogResponse] = await Promise.all([
+                    fetch("/api/social", { cache: "no-store" }),
+                    fetch("/api/catalog?mediaType=image", { cache: "no-store" }),
+                ]);
                 if (!response.ok) throw new Error("No se pudo cargar el carrusel.");
+                if (!catalogResponse.ok) throw new Error("No se pudo cargar el catálogo de modelos.");
                 const data = await response.json() as { projects?: SocialProject[] };
+                const catalog = await catalogResponse.json() as { models?: ImageModelCapability[] };
                 const project = data.projects?.find(item => item.id === projectId && item.format === "carousel");
                 if (!project) throw new Error("No se encontró el carrusel.");
-                setPendingGeneration({ model: IMAGE_CAPABILITIES[project.modelId]?.label ?? "Carrusel", startedAt: Date.now(), progress: detail.regenerateAll ? "Preparando regeneración completa…" : detail.slideId ? "Preparando regeneración…" : "Revisando páginas pendientes…" });
-                await runCarousel(project, detail.slideId, detail.regenerateAll);
+                const model = catalog.models?.find(item => item.id === project.modelId) ?? IMAGE_CAPABILITIES[project.modelId];
+                if (!model) throw new Error("El modelo seleccionado ya no está disponible. Elige otro modelo e inténtalo nuevamente.");
+                setPendingGeneration({ model: model.label, startedAt: Date.now(), progress: detail.regenerateAll ? "Preparando regeneración completa…" : detail.slideId ? "Preparando regeneración…" : "Revisando páginas pendientes…" });
+                await runCarousel(project, detail.slideId, detail.regenerateAll, model);
             } catch (cause) {
                 setApiErrorDetail(cause instanceof Error ? cause.message : "No se pudo continuar.");
                 setApiError("ERR_GENERIC");

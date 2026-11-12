@@ -33,7 +33,7 @@ const commandSchema = z.discriminatedUnion("action", [
 async function checkModel(modelId: string, ratio: string, resolution: string) {
     const model = await findCapability("image", modelId) as ImageModelCapability | undefined;
     if (!model) throw new WorkflowError("Selecciona un modelo de imagen disponible.", 400);
-    if (!isCarouselModel(model)) throw new WorkflowError("Para carruseles selecciona GPT Image o Nano Banana de OpenRouter o APIMart.", 400);
+    if (!isCarouselModel(model)) throw new WorkflowError("Para carruseles selecciona GPT Image o Nano Banana de OpenRouter, o un modelo de imagen de APIMart.", 400);
     const ratios = imageRatios(model);
     if (ratios.length > 0 && !ratios.includes(ratio)) throw new WorkflowError("El modelo no admite esa proporción.", 400);
     const resolutions = imageResolutions(model);

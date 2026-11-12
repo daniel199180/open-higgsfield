@@ -15,7 +15,14 @@ export function isCarouselProviderModel(provider: ImageModelCapability["provider
 }
 
 export function isCarouselModel(model: ImageModelCapability | undefined): model is ImageModelCapability {
-    return !!model && isCarouselProviderModel(model.provider, model.provider_model_id, model.label);
+    if (!model) return false;
+    // APIMart's runtime catalog is already separated by media type, so every
+    // model reaching this predicate is an image model. Models that do not
+    // accept references can still generate a missing slide independently;
+    // validation below continues to reject them when a brand/character image
+    // must be supplied.
+    if (model.provider === "apimart") return true;
+    return isCarouselProviderModel(model.provider, model.provider_model_id, model.label);
 }
 
-export const carouselModelHint = "GPT Image y Nano Banana de OpenRouter o APIMart. Cada página se genera por separado.";
+export const carouselModelHint = "GPT Image y Nano Banana de OpenRouter, o modelos de imagen compatibles de APIMart. Cada página se genera por separado.";

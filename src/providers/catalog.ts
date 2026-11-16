@@ -266,6 +266,9 @@ async function apiMarketCatalog(connection: ProviderConnection, mediaType: Media
 
 const APIMART_VIDEO_MODEL = /(?:video|seedance|kling|wan[-_.]?2|veo|sora|hunyuan|runway|luma|pika|mochi|cogvideo)/i;
 const APIMART_IMAGE_MODEL = /(?:image|imagen|banana|seedream|flux|ideogram|midjourney|recraft|qwen[-_.]?image|z[-_.]?image|grok[-_.]?imagine|stable[-_.]?diffusion|sdxl|gpt[-_.]?image|openai[-_.]?gpt|gemini[-_.]?(?:2\.5|3))/i;
+const APIMART_GPT_IMAGE_2 = /gpt[-_.]?image[-_.]?2(?:[.-]\d+)?(?:[-_.]|$)/i;
+const APIMART_GPT_IMAGE_2_RATIOS = ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21", "3:1", "1:3"];
+const APIMART_GPT_IMAGE_2_RESOLUTIONS = ["1k", "2k", "4k"];
 
 function apimartModelMediaType(model: Record<string, unknown>): MediaType | undefined {
     const id = String(model.id ?? model.model ?? "");
@@ -283,10 +286,13 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     // declared for this model; sending invented quality/reference fields makes
     // otherwise valid carousel requests fail with an opaque 400.
     const supported = (model.supported_parameters ?? model.parameters ?? {}) as Record<string, unknown>;
-    const ratios = fieldOptions(supported.aspect_ratio ?? model.aspect_ratios);
+    const declaredSizes = fieldOptions(supported.size ?? model.sizes);
+    const ratios = fieldOptions(supported.aspect_ratio ?? model.aspect_ratios ?? declaredSizes)
+        .filter(value => /^\d{1,2}:\d{1,2}$/.test(value));
     const resolutions = fieldOptions(supported.resolution ?? model.resolutions);
     const inputModes = fieldOptions(supported.input_modalities ?? model.input_modalities).map((value) => value.toLowerCase());
     const modelText = `${id} ${label}`.toLowerCase();
+    const isGptImage2 = APIMART_GPT_IMAGE_2.test(modelText);
     // APIMart's model list is inconsistent across versions. Keep explicit
     // metadata checks plus the documented multimodal families so the UI does
     // not hide reference inputs when a catalog response omits those flags.
@@ -294,7 +300,8 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
     const acceptsReferences = inputModes.includes("image") || supported.image_urls === true || supported.reference_images === true || multimodalReferences || isCarouselProviderModel("apimart", id, label);
     const acceptsReferenceVideo = inputModes.includes("video") || supported.video_urls === true || multimodalReferences;
     const acceptsReferenceAudio = inputModes.includes("audio") || supported.audio_urls === true || supported.reference_audio === true || multimodalReferences;
-    const displayRatios = ratios.length ? ratios : image ? ["1:1"] : ["16:9", "9:16", "1:1"];
+    const displayRatios = ratios.length ? ratios : image ? (isGptImage2 ? APIMART_GPT_IMAGE_2_RATIOS : ["1:1"]) : ["16:9", "9:16", "1:1"];
+    const displayResolutions = resolutions.length ? resolutions : image && isGptImage2 ? APIMART_GPT_IMAGE_2_RESOLUTIONS : [];
     return baseCapability({
         id: runtimeId("apimart", mediaType, connection.id, id),
         label,
@@ -308,11 +315,10 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
         provider_mode: image ? "native-image" : "video",
         prompt_max: numericField(supported.prompt) ?? numericField(model.prompt_max),
         duration: image ? false : { options: ["3", "5", "8", "10", "15"], default: "5" },
-        // A single 1:1 fallback keeps text-only image generation usable when
-        // APIMart omits metadata, without claiming every model supports 4K or
-        // every canvas shape.
+        // APIMart occasionally omits parameter metadata. GPT Image 2.x has a
+        // documented stable size contract; unknown families remain conservative.
         aspect_ratio: { options: displayRatios.map((ratio) => [ratio, ratio] as [string, string]), default: [displayRatios[0], displayRatios[0]] },
-        resolution_variant: image ? (resolutions.length ? { options: resolutions, default: resolutions[0] } : false) : { options: resolutions.length ? resolutions : ["480p", "720p", "1080p"], default: (resolutions.length ? resolutions : ["480p", "720p", "1080p"])[0] },
+        resolution_variant: image ? (displayResolutions.length ? { options: displayResolutions, default: displayResolutions[0] } : false) : { options: resolutions.length ? resolutions : ["480p", "720p", "1080p"], default: (resolutions.length ? resolutions : ["480p", "720p", "1080p"])[0] },
         media_slots: image
             ? (acceptsReferences ? [{ id: "input_references", label: "Imágenes de referencia", kind: "image", multiple: true, type: "reference" }] : [])
             : [
@@ -325,6 +331,7 @@ function apimartCapabilities(connection: ProviderConnection, mediaType: MediaTyp
         custom_fields: image
             ? (() => {
                 const fields: CustomFieldCapability[] = [];
+                if (displayResolutions.length) fields.push({ id: "resolution", label: "Resolution", type: "select", options: displayResolutions, default: displayResolutions[0] });
                 appendImageParameterFields(fields, supported);
                 return fields;
             })()

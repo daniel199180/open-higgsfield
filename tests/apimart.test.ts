@@ -18,6 +18,19 @@ test("APIMart uses its fixed official API, Bearer credentials, and asynchronous 
         params: { model_id: "image", prompt: "A ceramic mug", aspect_ratio: "1:1", resolution: "2k", field_values: { quality: "high" } }, media: { images: { input_references: "https://cdn.example/source.png" } },
     } as ProviderGenerationRequest;
 
+    await t.test("fills GPT Image sizes when APIMart omits catalog metadata", async (t) => {
+        t.mock.method(globalThis, "fetch", async (url: URL) => {
+            assert.equal(url.href, "https://api.apimart.ai/v1/models");
+            return Response.json({ data: [{ id: "gpt-image-2.6-sunburst", name: "GPT Image 2.6 Sunburst" }] });
+        });
+        const { getDynamicCatalog } = await import("../src/providers/catalog");
+        const models = await getDynamicCatalog("image", "apimart");
+        const model = models.find(item => item.provider_model_id === "gpt-image-2.6-sunburst");
+        assert.ok(model);
+        assert.deepEqual(model.aspect_ratio && model.aspect_ratio.options?.map(([, value]) => value), ["1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21", "3:1", "1:3"]);
+        assert.deepEqual(model.custom_fields.find(field => field.id === "resolution")?.options, ["1k", "2k", "4k"]);
+    });
+
     await t.test("submits images to the OpenAI-compatible endpoint", async (t) => {
         const mock = t.mock.method(globalThis, "fetch", async (url: URL, options: RequestInit) => {
             assert.equal(url.href, "https://api.apimart.ai/v1/images/generations");
